@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 import Combine
 
+extension UserDefaults {
+    /// KVO-compatible accessor; the property name must match `StatusBarController.showStatusItemKey`.
+    @objc dynamic var showStatusBarItem: Bool {
+        object(forKey: "showStatusBarItem") as? Bool ?? true
+    }
+}
+
 @MainActor
 public final class StatusBarController: NSObject {
     public static var shared: StatusBarController?
@@ -18,8 +25,28 @@ public final class StatusBarController: NSObject {
         setupStatusItem()
         setupPopover()
         observeViewModel()
+        observeVisibilitySetting()
         
         StatusBarController.shared = self
+    }
+    
+    /// UserDefaults key toggled from the Settings page.
+    public static let showStatusItemKey = "showStatusBarItem"
+    
+    private func observeVisibilitySetting() {
+        applyVisibility()
+        UserDefaults.standard.publisher(for: \.showStatusBarItem)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &cancellables)
+    }
+    
+    private func applyVisibility() {
+        let defaults = UserDefaults.standard
+        let show = defaults.object(forKey: Self.showStatusItemKey) as? Bool ?? true
+        guard statusItem.isVisible != show else { return }
+        if !show { closePopover() }
+        statusItem.isVisible = show
     }
     
     private func setupStatusItem() {

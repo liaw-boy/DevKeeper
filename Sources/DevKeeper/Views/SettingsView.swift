@@ -9,6 +9,7 @@ public struct SettingsView: View {
     @AppStorage("checkSelfUpdate") private var checkSelfUpdate: Bool = true
     @AppStorage("enableSecurityAudit") private var enableSecurityAudit: Bool = true
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = true
+    @AppStorage(StatusBarController.showStatusItemKey) private var showStatusBarItem: Bool = true
     @State private var gitHubToken: String = TokenStore.load()
     @AppStorage("projectsRootPath") private var projectsRootPath: String = ""
     
@@ -168,6 +169,15 @@ public struct SettingsView: View {
                 
                 // Section 4: 系統與常駐
                 settingsCard(title: "系統與開機啟動", icon: "macwindow") {
+                    settingToggleRow(
+                        title: "在選單列顯示 DevKeeper",
+                        subtitle: "於頂部選單列顯示圖示與待更新數量；關閉後仍可從 Dock 開啟主視窗",
+                        isOn: $showStatusBarItem
+                    )
+                    
+                    Divider()
+                        .background(Theme.subtleBorder)
+                    
                     settingToggleRow(
                         title: "開機自動啟動常駐",
                         subtitle: "登入系統時自動於頂部選單列啟動 DevKeeper 守護開發環境",
