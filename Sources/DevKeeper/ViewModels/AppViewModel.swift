@@ -328,7 +328,11 @@ public final class AppViewModel: ObservableObject {
                 kind: .interpreter, pythonPath: interpreter.path,
                 label: "Python \(interpreter.version) (\(interpreter.source.rawValue))"
             )
-            let packages = await PythonEnvironmentService.shared.installedPackages(pythonPath: interpreter.path)
+            // The Apple-provided Python ships some packages inside Xcode; only Apple can update those, so they are
+            // not audited. Packages the user installed into that Python are still audited.
+            let packages = interpreter.source == .system
+                ? await PythonEnvironmentService.shared.installedPackagesExcludingAppleBundle(pythonPath: interpreter.path)
+                : await PythonEnvironmentService.shared.installedPackages(pythonPath: interpreter.path)
             record(await auditList(packages, ecosystem: "PyPI", environment: env))
         }
         for env in await PythonEnvironmentService.shared.uvToolEnvironments() {

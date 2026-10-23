@@ -99,6 +99,7 @@ public final class PythonEnvironmentService: Sendable {
     private struct PipPackage: Decodable {
         let name: String
         let version: String
+        let location: String?
     }
     
     // MARK: - Package lists
@@ -108,6 +109,21 @@ public final class PythonEnvironmentService: Sendable {
         guard let out = try? await ShellExecutor.shared.run(command: "\(q) -m pip list --format=json 2>/dev/null"),
               let items = decode(out) else { return [] }
         return items.map { ($0.name, $0.version) }
+    }
+    
+    /// True when a package lives inside Apple's Xcode or Command Line Tools bundle. Those copies come with the
+    /// developer tools, only Apple can update them, and users cannot change them.
+    public static func isAppleBundledLocation(_ location: String?) -> Bool {
+        guard let location else { return false }
+        return location.contains("/Xcode.app/") || location.contains("/CommandLineTools/")
+    }
+    
+    /// Same as `installedPackages`, but leaves out packages bundled inside Xcode / Command Line Tools.
+    public func installedPackagesExcludingAppleBundle(pythonPath: String) async -> [(name: String, version: String)] {
+        let q = InputValidator.shellQuoted(pythonPath)
+        guard let out = try? await ShellExecutor.shared.run(command: "\(q) -m pip list -v --format=json 2>/dev/null"),
+              let items = decode(out) else { return [] }
+        return items.filter { !Self.isAppleBundledLocation($0.location) }.map { ($0.name, $0.version) }
     }
     
     /// Packages inside a uv tool environment (these venvs do not ship pip).
