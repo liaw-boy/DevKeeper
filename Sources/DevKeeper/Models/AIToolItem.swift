@@ -46,6 +46,14 @@ public struct AIToolItem: Identifiable, Codable, Sendable, Hashable {
         self.lastChecked = lastChecked
     }
     
+    /// True when a command pipes downloaded content into a shell (e.g. `curl ... | bash`).
+    public static func runsRemoteScript(_ command: String) -> Bool {
+        command.range(of: #"\|\s*(sudo\s+)?(ba|z)?sh\b"#, options: .regularExpression) != nil
+    }
+    
+    public var installRunsRemoteScript: Bool { Self.runsRemoteScript(installCommand) }
+    public var updateRunsRemoteScript: Bool { Self.runsRemoteScript(updateCommand) }
+    
     public var isOutdated: Bool {
         guard isInstalled, let latest = latestVersion, !latest.isEmpty else { return false }
         // Clean current version: remove prefix 'v', 'V' and text after space

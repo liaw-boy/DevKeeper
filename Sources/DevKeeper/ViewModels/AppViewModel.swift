@@ -237,8 +237,12 @@ public final class AppViewModel: ObservableObject {
         self.aiTools = updatedList
     }
     
-    public func upgradeAITool(item: AIToolItem) async {
+    public func upgradeAITool(item: AIToolItem, confirmedRemoteScript: Bool = false) async {
         guard !isActionRunning else { return }
+        if item.updateRunsRemoteScript && !confirmedRemoteScript {
+            appendLog("已取消 \(item.name) 升級：指令會執行遠端下載的腳本，需先確認。")
+            return
+        }
         isActionRunning = true
         currentActionPackageId = item.id
         
@@ -260,8 +264,12 @@ public final class AppViewModel: ObservableObject {
         }
     }
     
-    public func installAITool(item: AIToolItem) async {
+    public func installAITool(item: AIToolItem, confirmedRemoteScript: Bool = false) async {
         guard !isActionRunning else { return }
+        if item.installRunsRemoteScript && !confirmedRemoteScript {
+            appendLog("已取消 \(item.name) 安裝：指令會執行遠端下載的腳本，需先確認。")
+            return
+        }
         isActionRunning = true
         currentActionPackageId = item.id
         

@@ -4,6 +4,8 @@ public struct AIToolsView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var filterMode: FilterMode = .all
     @State private var copiedCommand: String? = nil
+    @State private var pendingScriptTool: AIToolItem? = nil
+    @State private var pendingScriptIsInstall = true
     
     enum FilterMode: String, CaseIterable, Identifiable {
         case all = "全部工具"
@@ -28,7 +30,38 @@ public struct AIToolsView: View {
         }
     }
     
+    private var remoteScriptDialogShown: Binding<Bool> {
+        Binding(
+            get: { pendingScriptTool != nil },
+            set: { if !$0 { pendingScriptTool = nil } }
+        )
+    }
+    
     public var body: some View {
+        content
+            .confirmationDialog(
+                "要執行遠端下載的腳本嗎？",
+                isPresented: remoteScriptDialogShown,
+                titleVisibility: .visible,
+                presenting: pendingScriptTool
+            ) { tool in
+                Button("確認並執行", role: .destructive) {
+                    let isInstall = pendingScriptIsInstall
+                    Task {
+                        if isInstall {
+                            await viewModel.installAITool(item: tool, confirmedRemoteScript: true)
+                        } else {
+                            await viewModel.upgradeAITool(item: tool, confirmedRemoteScript: true)
+                        }
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: { tool in
+                Text("\(tool.name) 的\(pendingScriptIsInstall ? "安裝" : "升級")指令會下載腳本並直接交給 shell 執行：\n\n\(pendingScriptIsInstall ? tool.installCommand : tool.updateCommand)\n\n請確認你信任該來源。")
+            }
+    }
+    
+    private var content: some View {
         VStack(spacing: 0) {
             // Header Bar
             headerView
@@ -459,8 +492,11 @@ public struct AIToolsView: View {
                     // Upgrade / Install Button
                     if tool.isInstalled {
                         Button(action: {
-                            Task {
-                                await viewModel.upgradeAITool(item: tool)
+                            if tool.updateRunsRemoteScript {
+                                pendingScriptIsInstall = false
+                                pendingScriptTool = tool
+                            } else {
+                                Task { await viewModel.upgradeAITool(item: tool) }
                             }
                         }) {
                             HStack(spacing: 6) {
@@ -486,8 +522,11 @@ public struct AIToolsView: View {
                         .disabled(viewModel.isActionRunning)
                     } else {
                         Button(action: {
-                            Task {
-                                await viewModel.installAITool(item: tool)
+                            if tool.installRunsRemoteScript {
+                                pendingScriptIsInstall = true
+                                pendingScriptTool = tool
+                            } else {
+                                Task { await viewModel.installAITool(item: tool) }
                             }
                         }) {
                             HStack(spacing: 6) {
