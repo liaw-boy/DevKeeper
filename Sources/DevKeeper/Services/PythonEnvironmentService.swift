@@ -29,7 +29,7 @@ public struct RemediationPlan: Identifiable, Sendable {
     public var summaryLines: [String] {
         var lines: [String] = []
         if kind == .migrate {
-            if !toolsToInstall.isEmpty { lines.append("把 \(toolsToInstall.joined(separator: "、")) 安裝到 uv 獨立環境") }
+            if !toolsToInstall.isEmpty { lines.append("把 \(toolsToInstall.joined(separator: "、")) 從 PyPI 重新下載並安裝到 uv 獨立環境（若原本不是從 PyPI 安裝的，來源會改變）") }
             if !toolsAlreadyInUV.isEmpty { lines.append("\(toolsAlreadyInUV.joined(separator: "、")) 在 uv 已有獨立環境，只移除舊拷貝") }
         }
         lines.append("從 \(interpreterLabel) 移除 \(packagesToRemove.count) 個套件（\(packagesToRemove.joined(separator: "、"))）")

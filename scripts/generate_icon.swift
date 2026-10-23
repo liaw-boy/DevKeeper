@@ -20,9 +20,10 @@ func renderIcon(pixelSize: Int) -> Data? {
         colorSpaceName: .deviceRGB,
         bytesPerRow: 0,
         bitsPerPixel: 0
-    ), let ctx = NSGraphicsContext(bitmapImageRep: rep)?.cgContext else {
+    ), let nsContext = NSGraphicsContext(bitmapImageRep: rep) else {
         return nil
     }
+    let ctx = nsContext.cgContext
 
     ctx.setAllowsAntialiasing(true)
     ctx.setShouldAntialias(true)
@@ -47,11 +48,11 @@ func renderIcon(pixelSize: Int) -> Data? {
     
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let colors = [
-        CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1.0),
-        CGColor(red: 0.10, green: 0.11, blue: 0.14, alpha: 1.0)
+        CGColor(red: 0.40, green: 0.48, blue: 1.0, alpha: 1.0),
+        CGColor(red: 0.28, green: 0.35, blue: 0.92, alpha: 1.0)
     ] as CFArray
     if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0]) {
-        ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: s), end: CGPoint(x: 0, y: 0), options: [])
+        ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: s), end: CGPoint(x: s, y: 0), options: [])
     }
     ctx.restoreGState()
 
@@ -63,50 +64,16 @@ func renderIcon(pixelSize: Int) -> Data? {
     ctx.strokePath()
     ctx.restoreGState()
 
-    // Draw central Package symbol (Isometric cube in clean Apple HIG style)
-    let cx = s * 0.5
-    let cy = s * 0.5
-    let cubeSize = s * 0.24
-
-    ctx.saveGState()
-    ctx.setLineWidth(s * 0.03)
-    ctx.setLineCap(.round)
-    ctx.setLineJoin(.round)
-    ctx.setStrokeColor(CGColor(red: 0.9, green: 0.92, blue: 0.96, alpha: 0.95))
-
-    // Top face
-    let pTop = CGPoint(x: cx, y: cy + cubeSize * 0.9)
-    let pLeft = CGPoint(x: cx - cubeSize * 0.9, y: cy + cubeSize * 0.4)
-    let pRight = CGPoint(x: cx + cubeSize * 0.9, y: cy + cubeSize * 0.4)
-    let pCenter = CGPoint(x: cx, y: cy - cubeSize * 0.1)
-    let pBottom = CGPoint(x: cx, y: cy - cubeSize * 1.0)
-    let pBottomLeft = CGPoint(x: cx - cubeSize * 0.9, y: cy - cubeSize * 0.5)
-    let pBottomRight = CGPoint(x: cx + cubeSize * 0.9, y: cy - cubeSize * 0.5)
-
-    // Outer contour
-    let path = CGMutablePath()
-    path.move(to: pTop)
-    path.addLine(to: pRight)
-    path.addLine(to: pBottomRight)
-    path.addLine(to: pBottom)
-    path.addLine(to: pBottomLeft)
-    path.addLine(to: pLeft)
-    path.closeSubpath()
-    ctx.addPath(path)
-    ctx.strokePath()
-
-    // Inner edges
-    let innerPath = CGMutablePath()
-    innerPath.move(to: pCenter)
-    innerPath.addLine(to: pTop)
-    innerPath.move(to: pCenter)
-    innerPath.addLine(to: pBottomLeft)
-    innerPath.move(to: pCenter)
-    innerPath.addLine(to: pBottomRight)
-    ctx.addPath(innerPath)
-    ctx.strokePath()
-
-    ctx.restoreGState()
+    // Same filled cube symbol the app uses in its sidebar and menu bar.
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = nsContext
+    let config = NSImage.SymbolConfiguration(pointSize: s * 0.46, weight: .bold)
+        .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+    if let symbol = NSImage(systemSymbolName: "cube.fill", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+        let size = symbol.size
+        symbol.draw(in: NSRect(x: (s - size.width) / 2, y: (s - size.height) / 2, width: size.width, height: size.height))
+    }
+    NSGraphicsContext.restoreGraphicsState()
 
     return rep.representation(using: .png, properties: [:])
 }

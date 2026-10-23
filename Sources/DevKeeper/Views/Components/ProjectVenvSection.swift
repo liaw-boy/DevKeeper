@@ -4,6 +4,7 @@ import AppKit
 /// Lists project virtual environments and lets the user rebuild old ones with a supported Python.
 struct ProjectVenvSection: View {
     @ObservedObject var viewModel: AppViewModel
+    @State private var pendingRebuild: ProjectVenv? = nil
     
     private var staleCount: Int { viewModel.projectVenvs.filter { $0.isEndOfLife }.count }
     
@@ -54,6 +55,17 @@ struct ProjectVenvSection: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.subtleBorder, lineWidth: 1))
         .task { await viewModel.scanProjectVenvs() }
+        .confirmationDialog(
+            pendingRebuild.map { "要重建 \($0.projectName) 的虛擬環境嗎？" } ?? "",
+            isPresented: Binding(get: { pendingRebuild != nil }, set: { if !$0 { pendingRebuild = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingRebuild
+        ) { venv in
+            Button("確認重建") { Task { await viewModel.rebuildVenv(venv) } }
+            Button("取消", role: .cancel) {}
+        } message: { venv in
+            Text("將用 Python \(PythonLifecycle.recommendedMinor) 建立新環境，並依這個專案的 \(venv.requirementsFile != nil ? "requirements.txt" : "已安裝套件清單") 從網路下載並安裝套件；安裝過程可能執行套件的建置腳本。請只對你信任的專案這樣做。舊環境會先備份，失敗會自動還原。")
+        }
     }
     
     private func row(_ venv: ProjectVenv) -> some View {
@@ -88,7 +100,7 @@ struct ProjectVenvSection: View {
                     .background(Theme.primaryIndigo.opacity(0.25))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 } else if venv.minorVersion.compare(PythonLifecycle.recommendedMinor, options: .numeric) == .orderedAscending {
-                    Button(action: { Task { await viewModel.rebuildVenv(venv) } }) {
+                    Button(action: { pendingRebuild = venv }) {
                         Text("用 \(PythonLifecycle.recommendedMinor) 重建")
                             .font(.system(size: 11.5, weight: .semibold))
                             .foregroundColor(.white)

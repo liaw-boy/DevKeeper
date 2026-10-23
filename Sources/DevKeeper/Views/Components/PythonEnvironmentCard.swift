@@ -29,7 +29,7 @@ struct PythonEnvironmentCard: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("沒有偵測到 Homebrew，將執行 uv 官方安裝腳本，並直接交給 shell 執行：\n\ncurl -LsSf https://astral.sh/uv/install.sh | sh\n\n請確認你信任該來源。")
+                Text("沒有偵測到 Homebrew，將執行 uv 官方安裝腳本，並直接交給 shell 執行：\n\ncurl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh\n\n請確認你信任該來源。")
             }
     }
     
@@ -120,9 +120,10 @@ struct PythonEnvironmentCard: View {
                 }
                 .disabled(viewModel.isActionRunning)
             } else if !interpreter.canUpgrade {
-                Text("系統內建，無法升級")
+                Text("Apple 內建，無法移除或升級")
                     .font(.system(size: 10.5))
                     .foregroundColor(.secondary)
+                    .help("這個 Python 是 Xcode 命令列工具的一部分，屬於 macOS 的受保護位置，只能由 Apple 更新，無法刪除。")
             } else {
                 Text("已是最新")
                     .font(.system(size: 10.5))

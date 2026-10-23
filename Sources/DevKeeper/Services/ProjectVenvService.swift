@@ -110,6 +110,28 @@ public final class ProjectVenvService: Sendable {
               targetPython.range(of: #"^3\.\d+$"#, options: .regularExpression) != nil else {
             return .failure("環境路徑或目標版本不合法，已拒絕。")
         }
+        
+        // Never run an interpreter that ships inside the project: a cloned repo could carry a fake
+        // `.venv/bin/python`. A real venv's python is a symlink to an interpreter outside the project.
+        let pythonLink = venvURL.appendingPathComponent("bin/python")
+        let realPython = pythonLink.resolvingSymlinksInPath().path
+        let projectPath = URL(fileURLWithPath: venv.projectPath).standardizedFileURL.path
+        guard realPython != pythonLink.path, !realPython.hasPrefix(projectPath + "/") else {
+            return .failure("這個環境的 python 不是指向系統安裝的直譯器（可能是專案自帶的檔案），為安全起見不執行。")
+        }
+        // Symlinked venv or requirements files could point anywhere; require real files inside the project.
+        if (try? venvURL.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true {
+            return .failure("環境資料夾是捷徑（symlink），已拒絕。")
+        }
+        if let req = venv.requirementsFile,
+           (try? URL(fileURLWithPath: req).resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true {
+            return .failure("requirements.txt 是捷徑（symlink），已拒絕。")
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        guard rootURL.path != "/", rootURL.path != home else {
+            return .failure("專案資料夾不能是根目錄或整個家目錄，請選擇專案所在的資料夾。")
+        }
+        
         let running = await runningProcesses(using: venv)
         guard running.isEmpty else {
             return .failure("有程式正在使用這個環境，請先停止它再重建：\n" + running.prefix(3).joined(separator: "\n"))
@@ -134,9 +156,14 @@ public final class ProjectVenvService: Sendable {
         
         func restore(_ reason: String) -> RebuildResult {
             try? fm.removeItem(at: venvURL)
-            try? fm.moveItem(at: backupURL, to: venvURL)
-            log("已還原舊環境。")
-            return .failure(reason)
+            do {
+                try fm.moveItem(at: backupURL, to: venvURL)
+                log("已還原舊環境。")
+                return .failure(reason)
+            } catch {
+                log("還原失敗。")
+                return .failure("\(reason)\n注意：自動還原失敗，舊環境仍在 \(backupURL.path)，請手動改回 \(venvURL.lastPathComponent)。")
+            }
         }
         
         // 3. Create the new venv at the same path.

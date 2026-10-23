@@ -1,7 +1,7 @@
 import Foundation
 
 public enum PythonSource: String, Sendable, Codable {
-    case system = "系統"
+    case system = "Apple 內建"
     case homebrew = "Homebrew"
     case pyenv = "pyenv"
     case uv = "uv"

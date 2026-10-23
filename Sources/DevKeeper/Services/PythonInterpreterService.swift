@@ -88,7 +88,7 @@ public final class PythonInterpreterService: Sendable {
     public func installUVStream(viaHomebrew: Bool) -> AsyncStream<String> {
         ShellExecutor.shared.stream(command: viaHomebrew
             ? "brew install uv"
-            : "curl -LsSf https://astral.sh/uv/install.sh | sh")
+            : "curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh")
     }
     
     private func inspect(path: String, source: PythonSource) async -> PythonInterpreter? {
