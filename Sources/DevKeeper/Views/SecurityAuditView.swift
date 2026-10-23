@@ -97,6 +97,13 @@ public struct SecurityAuditView: View {
     
     public var body: some View {
         content
+            .sheet(item: Binding(get: { viewModel.pendingBatch }, set: { viewModel.pendingBatch = $0 })) { batch in
+                RemediationBatchSheet(
+                    batch: batch,
+                    onConfirm: { Task { await viewModel.runBatch(batch) } },
+                    onCancel: { viewModel.pendingBatch = nil }
+                )
+            }
             .confirmationDialog(
                 pendingRemediation.map { $0.plan.kind == .migrate ? "要把 \($0.plan.packageName) 所屬的工具搬到獨立環境嗎？" : "要移除 \($0.plan.packageName) 嗎？" } ?? "",
                 isPresented: remediationDialogShown,
@@ -133,6 +140,7 @@ public struct SecurityAuditView: View {
                         cleanHealthBanner
                     } else {
                         vulnerabilitiesDetectedBanner
+                        fixProgressBar
                     }
                     
                     // Vulnerability List (Consolidated One Card per Package)
@@ -390,6 +398,43 @@ public struct SecurityAuditView: View {
         )
     }
     
+    /// Separate progress bar for any running fix, so the buttons themselves never change size or text.
+    @ViewBuilder
+    private var fixProgressBar: some View {
+        if viewModel.isActionRunning && (viewModel.isFixingAllVulnerabilities || viewModel.fixingVulnId != nil) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text(viewModel.actionStage.isEmpty ? "修復中..." : viewModel.actionStage)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    Text("\(Int(min(max(viewModel.actionProgress, 0), 1) * 100))%")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.08))
+                        Capsule()
+                            .fill(Theme.primaryGradient)
+                            .frame(width: geo.size.width * CGFloat(min(max(viewModel.actionProgress, 0.04), 1)))
+                            .animation(.easeOut(duration: 0.3), value: viewModel.actionProgress)
+                    }
+                }
+                .frame(height: 6)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Theme.subtleBorder, lineWidth: 1)
+            )
+        }
+    }
+    
     private var vulnerabilitiesDetectedBanner: some View {
         HStack(spacing: 14) {
             Image(systemName: "exclamationmark.shield.fill")
@@ -438,8 +483,8 @@ public struct SecurityAuditView: View {
                 HStack(spacing: 6) {
                     if viewModel.isFixingAllVulnerabilities {
                         ProgressView().controlSize(.small)
-                        Text(viewModel.actionStage.isEmpty ? "批次修復中..." : viewModel.actionStage)
-                            .font(.system(size: 11.5, weight: .semibold))
+                        Text("修復中")
+                            .font(.system(size: 12, weight: .semibold))
                     } else {
                         Image(systemName: "wrench.and.screwdriver.fill")
                             .font(.system(size: 11))
@@ -448,8 +493,9 @@ public struct SecurityAuditView: View {
                     }
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 14)
+                .frame(width: 150)
                 .padding(.vertical, 7.5)
+                .opacity(viewModel.isFixingAllVulnerabilities ? 0.75 : 1)
                 .background(Theme.dangerRed)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .shadow(color: Theme.dangerRed.opacity(0.35), radius: 4, x: 0, y: 1.5)
@@ -600,21 +646,19 @@ public struct SecurityAuditView: View {
                     HStack(spacing: 5) {
                         if isCompleted {
                             Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(Theme.successGreen)
-                                .font(.system(size: 11))
+                                .font(.system(size: 10.5))
                             Text("修復完成")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(Theme.successGreen)
+                                .font(.system(size: 11.5, weight: .semibold))
                         } else {
                             ProgressView().controlSize(.small)
-                            Text(viewModel.actionStage.isEmpty ? "修復中..." : viewModel.actionStage)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(Theme.primaryIndigo)
+                            Text("修復中")
+                                .font(.system(size: 11.5, weight: .semibold))
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4.5)
-                    .background(isCompleted ? Theme.successGreen.opacity(0.12) : Theme.primaryIndigo.opacity(0.12))
+                    .foregroundColor(isCompleted ? Theme.successGreen : .white)
+                    .frame(width: 84)
+                    .padding(.vertical, 5)
+                    .background(isCompleted ? Theme.successGreen.opacity(0.15) : Theme.primaryIndigo.opacity(0.65))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 } else {
                     Button(action: {
@@ -633,7 +677,7 @@ public struct SecurityAuditView: View {
                                 .font(.system(size: 11.5, weight: .semibold))
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 11)
+                        .frame(width: 84)
                         .padding(.vertical, 5)
                         .background(Theme.primaryIndigo)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))

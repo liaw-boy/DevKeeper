@@ -66,6 +66,24 @@ public final class PythonInterpreterService: Sendable {
         return result
     }
     
+    /// Which Python the `python3` command in a terminal currently runs (path and version), if any.
+    public func terminalPython() async -> (path: String, version: String)? {
+        let path = ((try? await ShellExecutor.shared.run(command: "command -v python3 2>/dev/null; true")) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        let out = ((try? await ShellExecutor.shared.run(command: "\(InputValidator.shellQuoted(path)) --version 2>&1")) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (path, out.replacingOccurrences(of: "Python ", with: ""))
+    }
+    
+    /// Makes `python`, `python3` and `python3.x` in ~/.local/bin run the given uv-managed Python.
+    public func setTerminalDefaultStream(minor: String) -> AsyncStream<String> {
+        guard minor.range(of: #"^3\.\d+$"#, options: .regularExpression) != nil else {
+            return ShellExecutor.shared.rejectedStream(reason: "不合法的 Python 版本")
+        }
+        return ShellExecutor.shared.stream(command: "uv python install \(minor) --default")
+    }
+    
     /// Installs uv with Homebrew when available, otherwise with the official installer script.
     public func installUVStream(viaHomebrew: Bool) -> AsyncStream<String> {
         ShellExecutor.shared.stream(command: viaHomebrew

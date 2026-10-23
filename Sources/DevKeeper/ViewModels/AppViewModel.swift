@@ -68,9 +68,12 @@ public final class AppViewModel: ObservableObject {
     @Published public var isScanningPython: Bool = false
     @Published public var pythonActionLabel: String? = nil
     @Published public var availableManagers: Set<PythonSource> = []
+    @Published public var terminalPython: (path: String, version: String)? = nil
     /// Alternative fixes (remove / move to an isolated environment), keyed by vulnerability group id.
     @Published public var remediationPlans: [String: RemediationPlan] = [:]
     @Published public var remediationNotes: [String: String] = [:]
+    /// Alternative fixes waiting for one confirmation after a one-click fix could not upgrade in place.
+    @Published public var pendingBatch: RemediationBatch? = nil
     /// Reasons why the last fix attempt for a vulnerability group or item did not reach a safe version.
     @Published public var fixFailures: [String: String] = [:]
     @Published public var isFixingAllVulnerabilities: Bool = false
@@ -567,6 +570,25 @@ public final class AppViewModel: ObservableObject {
         return pythonInterpreters.contains { $0.minorVersion == PythonLifecycle.recommendedMinor }
     }
     
+    /// True when the terminal's `python3` runs an interpreter whose support has ended (or none at all).
+    public var terminalPythonNeedsUpdate: Bool {
+        guard let terminalPython else { return false }
+        let parts = terminalPython.version.split(separator: ".")
+        guard parts.count >= 2 else { return false }
+        return PythonLifecycle.isEndOfLife(minor: "\(parts[0]).\(parts[1])")
+    }
+    
+    /// Points the terminal's `python3` at the recommended uv-managed Python (installing it if needed).
+    public func setTerminalPythonToRecommended() async {
+        guard availableManagers.contains(.uv) else {
+            appendLog("需要先安裝 uv，才能讓 python3 指向新版。")
+            return
+        }
+        await runPythonAction(label: "讓 python3 指令使用 Python \(PythonLifecycle.recommendedMinor)") {
+            PythonInterpreterService.shared.setTerminalDefaultStream(minor: PythonLifecycle.recommendedMinor)
+        }
+    }
+    
     /// Installs uv. Without Homebrew this runs the official installer script, which needs confirmation.
     public func installUV(confirmedRemoteScript: Bool = false) async {
         let viaBrew = availableManagers.contains(.homebrew)
@@ -598,7 +620,7 @@ public final class AppViewModel: ObservableObject {
     /// Installs tools into uv tool environments (when needed), then removes the old copies.
     /// Nothing is removed unless every install succeeded.
     @discardableResult
-    public func executeRemediation(_ plan: RemediationPlan, groupId: String, key: String) async -> Bool {
+    public func executeRemediation(_ plan: RemediationPlan, groupId: String, key: String, rescan: Bool = true) async -> Bool {
         guard !isActionRunning else { return false }
         guard pythonInterpreters.contains(where: { $0.path == plan.interpreterPath }) else {
             remediationNotes[key] = "找不到對應的 Python 環境，請重新掃描。"
@@ -664,9 +686,58 @@ public final class AppViewModel: ObservableObject {
         remediationNotes[key] = nil
         fixFailures[key] = nil
         isActionRunning = false
+        if rescan {
+            await scanPython()
+            await scanSecurityAudit()
+        }
+        return true
+    }
+    
+    // MARK: - One-click batch of alternative fixes
+    
+    public struct RemediationBatch: Identifiable {
+        public struct Item: Identifiable {
+            public var id: String { key }
+            public let key: String
+            public let plan: RemediationPlan
+        }
+        public let id = UUID()
+        public let items: [Item]
+    }
+    
+    /// Collects the alternative fixes for the given failed targets into one confirmation, merging duplicates.
+    func proposeBatch(keys: [String]) {
+        var seen = Set<String>()
+        var items: [RemediationBatch.Item] = []
+        for key in keys {
+            guard let plan = remediationPlans[key] else { continue }
+            let signature = "\(plan.kind)|\(plan.interpreterPath)|\(plan.toolsToInstall)|\(plan.packagesToRemove)"
+            if seen.insert(signature).inserted { items.append(.init(key: key, plan: plan)) }
+        }
+        pendingBatch = items.isEmpty ? nil : RemediationBatch(items: items)
+    }
+    
+    /// Runs every confirmed plan, skipping plans whose packages an earlier plan already removed.
+    public func runBatch(_ batch: RemediationBatch) async {
+        pendingBatch = nil
+        guard !isActionRunning else { return }
+        var removed = Set<String>()
+        var succeeded = 0
+        var failed = 0
+        for (index, item) in batch.items.enumerated() {
+            let names = Set(item.plan.packagesToRemove.map { PythonDependencyGraph.normalize($0) })
+            if names.isSubset(of: removed) { continue }
+            appendLog("批次修復 \(index + 1)/\(batch.items.count)：\(item.plan.packageName)")
+            if await executeRemediation(item.plan, groupId: item.key, key: item.key, rescan: false) {
+                removed.formUnion(names)
+                succeeded += 1
+            } else {
+                failed += 1
+            }
+        }
+        appendLog("替代修復結束：成功 \(succeeded) 項，失敗 \(failed) 項。重新掃描中...")
         await scanPython()
         await scanSecurityAudit()
-        return true
     }
     
     public func auditLocalProject(at url: URL) async {
@@ -841,6 +912,7 @@ public final class AppViewModel: ObservableObject {
         for env in failedEnvironments {
             await prepareRemediation(for: group, environment: env)
         }
+        proposeBatch(keys: failedEnvironments.map { group.key(for: $0) })
         return failedEnvironments.isEmpty
     }
     
@@ -904,6 +976,7 @@ public final class AppViewModel: ObservableObject {
         let jobs = groups.flatMap { group in group.fixTargets.map { (group, $0) } }
         var fixedCount = 0
         var failedCount = 0
+        var failedJobs: [(PackageVulnerabilityGroup, PythonEnvironmentRef?)] = []
         for (index, job) in jobs.enumerated() {
             let (group, target) = job
             let place = target.environment?.label ?? "全域"
@@ -930,17 +1003,21 @@ public final class AppViewModel: ObservableObject {
             case .failed(let reason):
                 fixFailures[key] = reason
                 failedCount += 1
+                failedJobs.append((group, target.environment))
                 appendLog("套件 \(group.packageName)（\(place)）修復失敗：\(reason)")
             }
         }
         
         appendLog("批次修復結束：成功 \(fixedCount) 項，失敗 \(failedCount) 項。")
         self.actionProgress = 1.0
-        self.actionStage = "批次修復結束，正在重新稽核..."
+        self.actionStage = "批次修復結束，正在分析替代做法..."
         self.isFixingAllVulnerabilities = false
         self.isActionRunning = false
         
+        for (group, env) in failedJobs { await prepareRemediation(for: group, environment: env) }
+        let failedKeys = failedJobs.map { $0.0.key(for: $0.1) }
         await scanSecurityAudit()
+        proposeBatch(keys: failedKeys)
     }
     
     public func checkSelfUpdate() async {
@@ -997,6 +1074,7 @@ public final class AppViewModel: ObservableObject {
         applySelectedPython()
         
         self.availableManagers = await PythonInterpreterService.shared.availableManagers()
+        self.terminalPython = await PythonInterpreterService.shared.terminalPython()
         self.uvLatestPatches = await PythonInterpreterService.shared.uvLatestPatches()
         self.installablePythons = await PythonInterpreterService.shared.installableReleases(installed: found)
     }

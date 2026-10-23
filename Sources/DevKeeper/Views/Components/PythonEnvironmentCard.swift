@@ -57,6 +57,8 @@ struct PythonEnvironmentCard: View {
             
             if needsUV { uvBanner }
             
+            terminalRow
+            
             installSection
             
             HStack(spacing: 10) {
@@ -232,6 +234,48 @@ struct PythonEnvironmentCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(Theme.dangerRed.opacity(0.35), lineWidth: 1)
+        )
+    }
+    
+    // MARK: - Terminal python3
+    
+    private var terminalRow: some View {
+        let info = viewModel.terminalPython
+        let stale = viewModel.terminalPythonNeedsUpdate
+        let canSwitch = viewModel.availableManagers.contains(.uv)
+        return HStack(spacing: 10) {
+            Image(systemName: "terminal")
+                .font(.system(size: 14))
+                .foregroundColor(stale ? Theme.warningAmber : Theme.primaryIndigo)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("終端機的 python3 指令")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(info.map { "目前執行 Python \($0.version)（\($0.path)）" } ?? "找不到 python3 指令")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            if stale || info == nil {
+                pillButton("改用 \(PythonLifecycle.recommendedMinor)", icon: "arrow.up.circle", prominent: true) {
+                    Task { await viewModel.setTerminalPythonToRecommended() }
+                }
+                .disabled(viewModel.isActionRunning || !canSwitch)
+                .help(canSwitch ? "用 uv 讓 python3 指向新版，不會動到系統內建的 Python" : "需要先安裝 uv")
+            } else {
+                Text("已是支援中的版本")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.subtleBorder, lineWidth: 1)
         )
     }
     

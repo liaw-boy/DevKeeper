@@ -22,6 +22,22 @@ public struct RemediationPlan: Identifiable, Sendable {
     public let packagesToRemove: [String]
     /// Python used for the new tool environments.
     public let targetPython: String?
+    /// Plain libraries (no command-line tool) that will be removed; scripts that import them would break.
+    public let librariesToRemove: [String]
+    
+    /// Plain-language summary used in confirmation dialogs.
+    public var summaryLines: [String] {
+        var lines: [String] = []
+        if kind == .migrate {
+            if !toolsToInstall.isEmpty { lines.append("把 \(toolsToInstall.joined(separator: "、")) 安裝到 uv 獨立環境") }
+            if !toolsAlreadyInUV.isEmpty { lines.append("\(toolsAlreadyInUV.joined(separator: "、")) 在 uv 已有獨立環境，只移除舊拷貝") }
+        }
+        lines.append("從 \(interpreterLabel) 移除 \(packagesToRemove.count) 個套件（\(packagesToRemove.joined(separator: "、"))）")
+        if !librariesToRemove.isEmpty {
+            lines.append("其中 \(librariesToRemove.joined(separator: "、")) 是函式庫；如果你自己的腳本有用到，移除後會無法執行")
+        }
+        return lines
+    }
 }
 
 /// Dependency information for one interpreter, built from `pip inspect`.
@@ -201,7 +217,8 @@ public final class PythonEnvironmentService: Sendable {
                 let removal = graph.removalClosure(seeds: [key])
                 return .plan(RemediationPlan(
                     kind: .remove, packageName: packageName, interpreterPath: interpreter.path, interpreterLabel: label,
-                    toolsToInstall: [], toolsAlreadyInUV: [], packagesToRemove: displayNames(removal, graph), targetPython: nil
+                    toolsToInstall: [], toolsAlreadyInUV: [], packagesToRemove: displayNames(removal, graph), targetPython: nil,
+                    librariesToRemove: [displayNames([key], graph).first ?? packageName]
                 ))
             }
         }
@@ -217,8 +234,14 @@ public final class PythonEnvironmentService: Sendable {
                 libraries.append(display)
             }
         }
-        guard libraries.isEmpty else {
-            return .unavailable("\(packageName) 被函式庫 \(libraries.joined(separator: "、")) 使用，無法自動搬移或移除，請自行處理使用它的程式。")
+        // Library roots (no executable) cannot live in a tool environment; they are removed with a warning.
+        if tools.isEmpty {
+            let removal = graph.removalClosure(seeds: Set(libraries.map { PythonDependencyGraph.normalize($0) }))
+            return .plan(RemediationPlan(
+                kind: .remove, packageName: packageName, interpreterPath: interpreter.path, interpreterLabel: label,
+                toolsToInstall: [], toolsAlreadyInUV: [], packagesToRemove: displayNames(removal, graph), targetPython: nil,
+                librariesToRemove: libraries
+            ))
         }
         guard uvAvailable else {
             return .unavailable("要把 \(tools.joined(separator: "、")) 搬到獨立環境需要 uv。請先在「偏好設定 → Python 環境」安裝 uv。")
@@ -229,11 +252,12 @@ public final class PythonEnvironmentService: Sendable {
         let existing = Set(await uvToolEnvironments().compactMap { $0.toolName }.map { PythonDependencyGraph.normalize($0) })
         let alreadyInUV = tools.filter { existing.contains(PythonDependencyGraph.normalize($0)) }
         let toInstall = tools.filter { !existing.contains(PythonDependencyGraph.normalize($0)) }
-        let removal = graph.removalClosure(seeds: Set(tools.map { PythonDependencyGraph.normalize($0) }))
+        let removal = graph.removalClosure(seeds: Set((tools + libraries).map { PythonDependencyGraph.normalize($0) }))
         return .plan(RemediationPlan(
             kind: .migrate, packageName: packageName, interpreterPath: interpreter.path, interpreterLabel: label,
             toolsToInstall: toInstall, toolsAlreadyInUV: alreadyInUV,
-            packagesToRemove: displayNames(removal, graph), targetPython: target
+            packagesToRemove: displayNames(removal, graph), targetPython: target,
+            librariesToRemove: libraries
         ))
     }
     
