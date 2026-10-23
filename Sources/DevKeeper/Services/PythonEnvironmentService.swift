@@ -264,7 +264,7 @@ public final class PythonEnvironmentService: Sendable {
             ))
         }
         guard uvAvailable else {
-            return .unavailable("要把 \(tools.joined(separator: "、")) 搬到獨立環境需要 uv。請先在「偏好設定 → Python 環境」安裝 uv。")
+            return .unavailable("要把 \(tools.joined(separator: "、")) 搬到獨立環境需要 uv。請先安裝 uv（https://docs.astral.sh/uv/）。")
         }
         guard let target = targetPython else {
             return .unavailable("找不到可用的新版 Python（3.10 以上）來建立獨立環境。")

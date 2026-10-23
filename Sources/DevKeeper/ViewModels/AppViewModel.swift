@@ -6,7 +6,6 @@ public enum NavigationTab: String, CaseIterable, Identifiable, Sendable {
     case aiTools = "AI 開發工具"
     case npm = "npm 套件"
     case python = "Python 套件"
-    case pythonVersions = "Python 版本"
     case brew = "Homebrew"
     case database = "資料庫服務"
     case security = "安全弱點稽核"
@@ -21,7 +20,6 @@ public enum NavigationTab: String, CaseIterable, Identifiable, Sendable {
         case .aiTools: return "sparkles"
         case .npm: return "cube"
         case .python: return "chevron.left.forwardslash.chevron.right"
-        case .pythonVersions: return "square.stack.3d.up"
         case .brew: return "shippingbox"
         case .database: return "cylinder.split.1x2"
         case .security: return "shield.checkered"
@@ -58,19 +56,9 @@ public final class AppViewModel: ObservableObject {
     @Published public var completedPackageId: String? = nil
     @Published public var fixingVulnId: String? = nil
     @Published public var pythonInterpreters: [PythonInterpreter] = []
-    @Published public var installablePythons: [PythonRelease] = []
-    @Published public var uvLatestPatches: [String: String] = [:]
     @Published public var isScanningPython: Bool = false
     @Published public var pythonActionLabel: String? = nil
     @Published public var availableManagers: Set<PythonSource> = []
-    @Published public var terminalPython: (path: String, version: String)? = nil
-    @Published public var projectVenvs: [ProjectVenv] = []
-    @Published public var isScanningVenvs: Bool = false
-    /// Result text per venv path after a rebuild attempt.
-    @Published public var venvMessages: [String: String] = [:]
-    /// Backup folder per venv path created by a successful rebuild.
-    @Published public var venvBackups: [String: String] = [:]
-    @Published public var rebuildingVenvPath: String? = nil
     /// Number of vulnerabilities hidden because the user accepted the risk.
     @Published public var ignoredCount: Int = 0
     /// Alternative fixes (remove / move to an isolated environment), keyed by vulnerability group id.
@@ -409,132 +397,6 @@ public final class AppViewModel: ObservableObject {
         if let path = newestModernPython()?.path { return path }
         guard availableManagers.contains(.uv) else { return nil }
         return PythonLifecycle.recommendedMinor
-    }
-    
-    /// Interpreters whose support has ended.
-    public var endOfLifePythons: [PythonInterpreter] { pythonInterpreters.filter { $0.isEndOfLife } }
-    
-    /// True when the recommended Python minor version is not installed yet.
-    public var needsRecommendedPython: Bool {
-        !pythonInterpreters.contains { $0.minorVersion == PythonLifecycle.recommendedMinor }
-    }
-    
-    /// Installs uv when needed, then the recommended Python. Returns false when it had to stop.
-    @discardableResult
-    public func upgradeToRecommendedPython(confirmedRemoteScript: Bool = false) async -> Bool {
-        guard !isActionRunning else { return false }
-        if !availableManagers.contains(.uv) {
-            await installUV(confirmedRemoteScript: confirmedRemoteScript)
-            guard availableManagers.contains(.uv) else {
-                appendLog("一鍵升級中止：uv 尚未安裝成功。")
-                return false
-            }
-        }
-        guard needsRecommendedPython else { return true }
-        await installPython(PythonRelease(source: .uv, version: PythonLifecycle.recommendedMinor))
-        return pythonInterpreters.contains { $0.minorVersion == PythonLifecycle.recommendedMinor }
-    }
-    
-    /// True when the terminal's `python3` runs an interpreter whose support has ended (or none at all).
-    public var terminalPythonNeedsUpdate: Bool {
-        guard let terminalPython else { return false }
-        let parts = terminalPython.version.split(separator: ".")
-        guard parts.count >= 2 else { return false }
-        return PythonLifecycle.isEndOfLife(minor: "\(parts[0]).\(parts[1])")
-    }
-    
-    /// Points the terminal's `python3` at the recommended uv-managed Python (installing it if needed).
-    public func setTerminalPythonToRecommended() async {
-        guard availableManagers.contains(.uv) else {
-            appendLog("需要先安裝 uv，才能讓 python3 指向新版。")
-            return
-        }
-        await runPythonAction(label: "讓 python3 指令使用 Python \(PythonLifecycle.recommendedMinor)") {
-            PythonInterpreterService.shared.setTerminalDefaultStream(minor: PythonLifecycle.recommendedMinor)
-        }
-    }
-    
-    // MARK: - Project virtual environments
-    
-    public var projectsRoot: String { UserDefaults.standard.string(forKey: "projectsRootPath") ?? "" }
-    
-    public func setProjectsRoot(_ path: String) async {
-        UserDefaults.standard.set(path, forKey: "projectsRootPath")
-        await scanProjectVenvs()
-    }
-    
-    public func scanProjectVenvs() async {
-        guard !isScanningVenvs else { return }
-        isScanningVenvs = true
-        defer { isScanningVenvs = false }
-        let root = projectsRoot
-        guard !root.isEmpty else { projectVenvs = []; return }
-        projectVenvs = await Task.detached(priority: .userInitiated) {
-            ProjectVenvService.shared.scan(root: root)
-        }.value
-    }
-    
-    /// Rebuilds a project's virtual environment with the recommended Python; the old one is kept as a backup.
-    public func rebuildVenv(_ venv: ProjectVenv) async {
-        guard !isActionRunning else { return }
-        guard availableManagers.contains(.uv) else {
-            venvMessages[venv.id] = "需要先安裝 uv 才能重建環境。"
-            return
-        }
-        isActionRunning = true
-        rebuildingVenvPath = venv.id
-        pythonActionLabel = "重建 \(venv.projectName) 的環境"
-        venvMessages[venv.id] = nil
-        liveLogOutput = ""
-        appendLog("開始重建 \(venv.projectName) 的虛擬環境（Python \(venv.pythonVersion) → \(PythonLifecycle.recommendedMinor)）...")
-        
-        let result = await ProjectVenvService.shared.rebuild(
-            venv, root: projectsRoot, targetPython: PythonLifecycle.recommendedMinor
-        ) { [weak self] text in
-            Task { @MainActor in self?.liveLogOutput += text }
-        }
-        
-        switch result {
-        case .success(let backup, let changed, let warnings):
-            venvBackups[venv.id] = backup
-            var message = "已用 Python \(PythonLifecycle.recommendedMinor) 重建完成。"
-            if changed { message += "部分套件的固定版本無法在新版 Python 安裝，已改裝最新版。" }
-            if !warnings.isEmpty { message += "相容性提醒：\(warnings)" }
-            message += "請先執行一次確認正常，再刪除舊環境備份。"
-            venvMessages[venv.id] = message
-            appendLog("\(venv.projectName) 的環境重建完成，舊環境備份在 \(backup)")
-        case .failure(let reason):
-            venvMessages[venv.id] = "重建失敗，舊環境已保持原狀：\(reason)"
-            appendLog("\(venv.projectName) 的環境重建失敗：\(reason)")
-        }
-        
-        rebuildingVenvPath = nil
-        pythonActionLabel = nil
-        isActionRunning = false
-        await scanProjectVenvs()
-    }
-    
-    public func deleteVenvBackup(for venv: ProjectVenv) {
-        guard let backup = venvBackups[venv.id] else { return }
-        if ProjectVenvService.shared.deleteBackup(backup, root: projectsRoot) {
-            venvBackups[venv.id] = nil
-            venvMessages[venv.id] = "已刪除舊環境備份。"
-            appendLog("已刪除 \(venv.projectName) 的舊環境備份。")
-        } else {
-            venvMessages[venv.id] = "無法刪除備份，請手動刪除：\(backup)"
-        }
-    }
-    
-    /// Installs uv. Without Homebrew this runs the official installer script, which needs confirmation.
-    public func installUV(confirmedRemoteScript: Bool = false) async {
-        let viaBrew = availableManagers.contains(.homebrew)
-        if !viaBrew && !confirmedRemoteScript {
-            appendLog("已取消安裝 uv：官方安裝腳本需要先確認。")
-            return
-        }
-        await runPythonAction(label: "安裝 uv") {
-            PythonInterpreterService.shared.installUVStream(viaHomebrew: viaBrew)
-        }
     }
     
     /// Works out whether a vulnerable package can be removed, or its tool moved to an isolated environment.
@@ -1062,9 +924,6 @@ public final class AppViewModel: ObservableObject {
         applySelectedPython()
         
         self.availableManagers = await PythonInterpreterService.shared.availableManagers()
-        self.terminalPython = await PythonInterpreterService.shared.terminalPython()
-        self.uvLatestPatches = await PythonInterpreterService.shared.uvLatestPatches()
-        self.installablePythons = await PythonInterpreterService.shared.installableReleases(installed: found)
     }
     
     private func applySelectedPython() {
@@ -1082,54 +941,6 @@ public final class AppViewModel: ObservableObject {
     }
     
     public var selectedPythonPath: String? { PythonRuntime.current?.path }
-    
-    /// Latest patch version available for an interpreter, when its manager can tell.
-    public func upgradeTarget(for interpreter: PythonInterpreter) -> String? {
-        switch interpreter.source {
-        case .uv:
-            if let latest = uvLatestPatches[interpreter.minorVersion],
-               latest.compare(interpreter.version, options: .numeric) == .orderedDescending {
-                return latest
-            }
-            return nil
-        case .homebrew:
-            let name = "python@\(interpreter.minorVersion)"
-            return brewPackages.first { $0.name == name && $0.status.isOutdated }?.latestVersion
-        case .pyenv, .system:
-            return nil
-        }
-    }
-    
-    public func upgradePython(_ interpreter: PythonInterpreter) async {
-        await runPythonAction(label: "升級 Python \(interpreter.version) (\(interpreter.source.rawValue))") {
-            PythonInterpreterService.shared.upgradeStream(interpreter)
-        }
-    }
-    
-    public func installPython(_ release: PythonRelease) async {
-        await runPythonAction(label: "安裝 Python \(release.version) (\(release.source.rawValue))") {
-            PythonInterpreterService.shared.installStream(release)
-        }
-    }
-    
-    private func runPythonAction(label: String, stream: () -> AsyncStream<String>) async {
-        guard !isActionRunning else { return }
-        isActionRunning = true
-        pythonActionLabel = label
-        liveLogOutput = ""
-        appendLog("開始\(label)...")
-        
-        for await chunk in stream() {
-            liveLogOutput += chunk
-        }
-        let ok = ShellExecutor.shared.lastStreamStatus == 0
-        appendLog(ok ? "\(label)完成。" : "\(label)失敗，請查看執行日誌。")
-        
-        pythonActionLabel = nil
-        isActionRunning = false
-        await scanPythonInterpreters()
-        if ok { await scanBrew() }
-    }
     
     public func scanPython() async {
         do {

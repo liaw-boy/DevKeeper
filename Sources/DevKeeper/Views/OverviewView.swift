@@ -333,15 +333,6 @@ public struct OverviewView: View {
                     )
                     
                     compactMetricCard(
-                        title: "Python 版本",
-                        count: viewModel.pythonInterpreters.count,
-                        outdated: viewModel.endOfLifePythons.count,
-                        symbol: "square.stack.3d.up",
-                        tint: Theme.primaryIndigo,
-                        tab: .pythonVersions
-                    )
-                    
-                    compactMetricCard(
                         title: "資料庫服務",
                         count: viewModel.databaseServices.count,
                         outdated: 0,

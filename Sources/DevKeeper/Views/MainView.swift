@@ -99,8 +99,6 @@ public struct MainView: View {
                     NpmListView(viewModel: viewModel)
                 case .python:
                     PythonListView(viewModel: viewModel)
-                case .pythonVersions:
-                    PythonVersionsView(viewModel: viewModel)
                 case .brew:
                     BrewListView(viewModel: viewModel)
                 case .database:
@@ -183,8 +181,6 @@ public struct MainView: View {
             return viewModel.outdatedNpmCount
         case .python:
             return viewModel.outdatedPythonCount
-        case .pythonVersions:
-            return nil
         case .brew:
             return viewModel.outdatedBrewCount
         case .security:

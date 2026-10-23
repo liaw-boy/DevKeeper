@@ -112,7 +112,7 @@ public struct SettingsView: View {
                     )
                 }
                 
-                // 本機專案資料夾（供安全稽核與專案虛擬環境重建使用）
+                // 本機專案資料夾（供安全稽核掃描專案相依套件使用）
                 settingsCard(title: "本機專案資料夾", icon: "folder") {
                     HStack(spacing: 10) {
                         Text(projectsRootPath.isEmpty ? "尚未設定（不掃描本機專案）" : projectsRootPath)

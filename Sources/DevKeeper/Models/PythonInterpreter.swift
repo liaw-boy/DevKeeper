@@ -21,15 +21,4 @@ public struct PythonInterpreter: Identifiable, Hashable, Sendable {
         let parts = version.split(separator: ".")
         return parts.count >= 2 ? "\(parts[0]).\(parts[1])" : version
     }
-    
-    /// System Python belongs to macOS and cannot be upgraded from here.
-    public var canUpgrade: Bool { source != .system }
-}
-
-/// An installable or upgradable Python release offered by a version manager.
-public struct PythonRelease: Identifiable, Hashable, Sendable {
-    public var id: String { "\(source.rawValue)-\(version)" }
-    public let source: PythonSource
-    /// Full version for uv/pyenv, minor version (e.g. "3.13") for Homebrew formulae.
-    public let version: String
 }
