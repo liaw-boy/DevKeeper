@@ -69,6 +69,13 @@ public final class AppViewModel: ObservableObject {
     @Published public var pythonActionLabel: String? = nil
     @Published public var availableManagers: Set<PythonSource> = []
     @Published public var terminalPython: (path: String, version: String)? = nil
+    @Published public var projectVenvs: [ProjectVenv] = []
+    @Published public var isScanningVenvs: Bool = false
+    /// Result text per venv path after a rebuild attempt.
+    @Published public var venvMessages: [String: String] = [:]
+    /// Backup folder per venv path created by a successful rebuild.
+    @Published public var venvBackups: [String: String] = [:]
+    @Published public var rebuildingVenvPath: String? = nil
     /// Alternative fixes (remove / move to an isolated environment), keyed by vulnerability group id.
     @Published public var remediationPlans: [String: RemediationPlan] = [:]
     @Published public var remediationNotes: [String: String] = [:]
@@ -586,6 +593,77 @@ public final class AppViewModel: ObservableObject {
         }
         await runPythonAction(label: "讓 python3 指令使用 Python \(PythonLifecycle.recommendedMinor)") {
             PythonInterpreterService.shared.setTerminalDefaultStream(minor: PythonLifecycle.recommendedMinor)
+        }
+    }
+    
+    // MARK: - Project virtual environments
+    
+    public var projectsRoot: String { UserDefaults.standard.string(forKey: "projectsRootPath") ?? "" }
+    
+    public func setProjectsRoot(_ path: String) async {
+        UserDefaults.standard.set(path, forKey: "projectsRootPath")
+        await scanProjectVenvs()
+    }
+    
+    public func scanProjectVenvs() async {
+        guard !isScanningVenvs else { return }
+        isScanningVenvs = true
+        defer { isScanningVenvs = false }
+        let root = projectsRoot
+        guard !root.isEmpty else { projectVenvs = []; return }
+        projectVenvs = await Task.detached(priority: .userInitiated) {
+            ProjectVenvService.shared.scan(root: root)
+        }.value
+    }
+    
+    /// Rebuilds a project's virtual environment with the recommended Python; the old one is kept as a backup.
+    public func rebuildVenv(_ venv: ProjectVenv) async {
+        guard !isActionRunning else { return }
+        guard availableManagers.contains(.uv) else {
+            venvMessages[venv.id] = "需要先安裝 uv 才能重建環境。"
+            return
+        }
+        isActionRunning = true
+        rebuildingVenvPath = venv.id
+        pythonActionLabel = "重建 \(venv.projectName) 的環境"
+        venvMessages[venv.id] = nil
+        liveLogOutput = ""
+        appendLog("開始重建 \(venv.projectName) 的虛擬環境（Python \(venv.pythonVersion) → \(PythonLifecycle.recommendedMinor)）...")
+        
+        let result = await ProjectVenvService.shared.rebuild(
+            venv, root: projectsRoot, targetPython: PythonLifecycle.recommendedMinor
+        ) { [weak self] text in
+            Task { @MainActor in self?.liveLogOutput += text }
+        }
+        
+        switch result {
+        case .success(let backup, let changed, let warnings):
+            venvBackups[venv.id] = backup
+            var message = "已用 Python \(PythonLifecycle.recommendedMinor) 重建完成。"
+            if changed { message += "部分套件的固定版本無法在新版 Python 安裝，已改裝最新版。" }
+            if !warnings.isEmpty { message += "相容性提醒：\(warnings)" }
+            message += "請先執行一次確認正常，再刪除舊環境備份。"
+            venvMessages[venv.id] = message
+            appendLog("\(venv.projectName) 的環境重建完成，舊環境備份在 \(backup)")
+        case .failure(let reason):
+            venvMessages[venv.id] = "重建失敗，舊環境已保持原狀：\(reason)"
+            appendLog("\(venv.projectName) 的環境重建失敗：\(reason)")
+        }
+        
+        rebuildingVenvPath = nil
+        pythonActionLabel = nil
+        isActionRunning = false
+        await scanProjectVenvs()
+    }
+    
+    public func deleteVenvBackup(for venv: ProjectVenv) {
+        guard let backup = venvBackups[venv.id] else { return }
+        if ProjectVenvService.shared.deleteBackup(backup, root: projectsRoot) {
+            venvBackups[venv.id] = nil
+            venvMessages[venv.id] = "已刪除舊環境備份。"
+            appendLog("已刪除 \(venv.projectName) 的舊環境備份。")
+        } else {
+            venvMessages[venv.id] = "無法刪除備份，請手動刪除：\(backup)"
         }
     }
     

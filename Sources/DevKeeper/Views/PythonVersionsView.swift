@@ -42,6 +42,8 @@ public struct PythonVersionsView: View {
                             .stroke(Theme.subtleBorder, lineWidth: 1)
                     )
                     
+                    ProjectVenvSection(viewModel: viewModel)
+                    
                     Text("提示：升級後的新版本是安裝在舊版本旁邊，不會取代它。舊版本裡的套件需要在「安全弱點稽核」用「搬到獨立環境」或「移除套件」處理。")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
