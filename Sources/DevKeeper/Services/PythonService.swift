@@ -17,7 +17,7 @@ public final class PythonService: Sendable {
     /// Fetches all packages that are genuinely upgradable and compatible with the current local Python runtime
     public func fetchOutdatedMap() async -> [String: String] {
         do {
-            let rawJson = try await ShellExecutor.shared.run(command: "python3 -m pip list --outdated --format=json")
+            let rawJson = try await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) -m pip list --outdated --format=json")
             guard let data = extractJsonData(from: rawJson) else { return [:] }
             let items = try JSONDecoder().decode([PipOutdatedItem].self, from: data)
             var map: [String: String] = [:]
@@ -31,7 +31,7 @@ public final class PythonService: Sendable {
     }
     
     public func fetchInstalledPackages() async throws -> [PackageItem] {
-        let rawJson = try await ShellExecutor.shared.run(command: "python3 -m pip list --format=json")
+        let rawJson = try await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) -m pip list --format=json")
         guard let data = extractJsonData(from: rawJson) else {
             return []
         }
@@ -81,19 +81,22 @@ public final class PythonService: Sendable {
     
     public func upgradePackage(name: String) -> AsyncStream<String> {
         guard let n = InputValidator.safeName(name) else { return ShellExecutor.shared.rejectedStream(reason: "套件名稱含不允許的字元") }
-        let command = "python3 -m pip install --upgrade \(n)"
+        if let reason = PythonRuntime.writeBlockReason { return ShellExecutor.shared.rejectedStream(reason: reason) }
+        let command = "\(PythonRuntime.executable) -m pip install --upgrade \(n)"
         return ShellExecutor.shared.stream(command: command)
     }
     
     public func cleanUninstallPackage(name: String) -> AsyncStream<String> {
         guard let n = InputValidator.safeName(name) else { return ShellExecutor.shared.rejectedStream(reason: "套件名稱含不允許的字元") }
-        let command = "python3 -m pip uninstall -y \(n)"
+        if let reason = PythonRuntime.writeBlockReason { return ShellExecutor.shared.rejectedStream(reason: reason) }
+        let command = "\(PythonRuntime.executable) -m pip uninstall -y \(n)"
         return ShellExecutor.shared.stream(command: command)
     }
     
     public func installPackage(name: String) -> AsyncStream<String> {
         guard let n = InputValidator.safeName(name) else { return ShellExecutor.shared.rejectedStream(reason: "套件名稱含不允許的字元") }
-        let command = "python3 -m pip install \(n)"
+        if let reason = PythonRuntime.writeBlockReason { return ShellExecutor.shared.rejectedStream(reason: reason) }
+        let command = "\(PythonRuntime.executable) -m pip install \(n)"
         return ShellExecutor.shared.stream(command: command)
     }
     

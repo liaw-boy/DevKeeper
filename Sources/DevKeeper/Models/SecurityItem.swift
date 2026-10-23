@@ -18,6 +18,24 @@ public enum VulnerabilitySeverity: String, Codable, Sendable {
     }
 }
 
+/// Where a vulnerable Python package is installed.
+public struct PythonEnvironmentRef: Hashable, Sendable {
+    public enum Kind: String, Sendable { case interpreter, uvTool }
+    public let kind: Kind
+    /// Python executable of the environment (interpreter path, or the tool venv's python).
+    public let pythonPath: String
+    /// Tool name for uv tool environments.
+    public let toolName: String?
+    public let label: String
+    
+    public init(kind: Kind, pythonPath: String, toolName: String? = nil, label: String) {
+        self.kind = kind
+        self.pythonPath = pythonPath
+        self.toolName = toolName
+        self.label = label
+    }
+}
+
 public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     public let id: String
     public let cveId: String
@@ -31,6 +49,8 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     public let advisoryUrl: String?
     /// Set when the vulnerable dependency comes from a local project rather than a global install.
     public let projectPath: String?
+    /// Set for Python packages found in an interpreter or uv tool environment.
+    public let environment: PythonEnvironmentRef?
     
     public init(
         id: String,
@@ -43,9 +63,11 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
         summary: String,
         details: String,
         advisoryUrl: String? = nil,
-        projectPath: String? = nil
+        projectPath: String? = nil,
+        environment: PythonEnvironmentRef? = nil
     ) {
         self.projectPath = projectPath
+        self.environment = environment
         self.id = id
         self.cveId = cveId
         self.packageName = packageName
@@ -60,7 +82,17 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     
     /// Shell command that fixes this vulnerability, or "" when it cannot be fixed automatically.
     public var fixCommand: String {
-        FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: fixedVersion, projectPath: projectPath)
+        FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: fixedVersion, projectPath: projectPath, environment: environment)
+    }
+    
+    /// Copy of this item tagged with the environment it was found in.
+    public func inEnvironment(_ env: PythonEnvironmentRef) -> VulnerabilityItem {
+        VulnerabilityItem(
+            id: id, cveId: cveId, packageName: packageName, ecosystem: ecosystem,
+            currentVersion: currentVersion, fixedVersion: fixedVersion, severity: severity,
+            summary: summary, details: details, advisoryUrl: advisoryUrl,
+            projectPath: projectPath, environment: env
+        )
     }
     
     public var osvUrl: URL? {
@@ -79,7 +111,7 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
 }
 
 public struct PackageVulnerabilityGroup: Identifiable, Sendable {
-    public var id: String { "\(ecosystem.lowercased()):\(packageName.lowercased()):\(projectPath ?? "")" }
+    public var id: String { "\(ecosystem.lowercased()):\(packageName.lowercased()):\(projectPath ?? ""):\(environment?.pythonPath ?? "")" }
     public let packageName: String
     public let ecosystem: String
     public let currentVersion: String
@@ -135,25 +167,33 @@ public struct PackageVulnerabilityGroup: Identifiable, Sendable {
     
     /// Shell command that fixes this package, or "" when it cannot be fixed automatically.
     public var fixCommand: String {
-        FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: targetSafeVersion, projectPath: projectPath)
+        FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: targetSafeVersion, projectPath: projectPath, environment: environment)
     }
     
     public var projectPath: String? { vulnerabilities.first?.projectPath }
+    public var environment: PythonEnvironmentRef? { vulnerabilities.first?.environment }
 }
 
 enum FixCommandBuilder {
-    static func command(packageName: String, ecosystem: String, targetVersion: String?, projectPath: String?) -> String {
+    static func command(packageName: String, ecosystem: String, targetVersion: String?, projectPath: String?, environment: PythonEnvironmentRef? = nil) -> String {
         // Project dependencies are not touched automatically; the app has no per-project working directory.
         guard projectPath == nil, InputValidator.isValidPackageName(packageName) else { return "" }
         let version = targetVersion.flatMap { $0.isEmpty ? nil : $0 }
         if let version, !InputValidator.isValidVersion(version) { return "" }
         
+        // uv tool environments are upgraded as a whole tool; pip is not installed inside them.
+        if let environment, environment.kind == .uvTool {
+            guard let tool = environment.toolName, InputValidator.isValidPackageName(tool) else { return "" }
+            return "uv tool upgrade \(tool)"
+        }
+        
         let eco = ecosystem.lowercased()
         if eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
+            let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
             if let version {
-                return "python3 -m pip install --upgrade \"\(packageName)>=\(version)\""
+                return "\(python) -m pip install --upgrade \"\(packageName)>=\(version)\""
             }
-            return "python3 -m pip install --upgrade \(packageName)"
+            return "\(python) -m pip install --upgrade \(packageName)"
         } else if eco.contains("npm") {
             return "npm install -g \(packageName)@\(version ?? "latest")"
         } else if eco.contains("brew") {

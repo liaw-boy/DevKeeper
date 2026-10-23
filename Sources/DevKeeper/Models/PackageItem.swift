@@ -112,7 +112,7 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
         case .npm:
             return "npm install -g \(name)"
         case .python:
-            return "python3 -m pip install --upgrade \(name)"
+            return "\(PythonRuntime.executable) -m pip install --upgrade \(name)"
         case .database:
             return "brew upgrade \(name) && brew services restart \(name)"
         }

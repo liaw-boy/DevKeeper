@@ -9,6 +9,13 @@ public struct SecurityAuditView: View {
     @State private var searchKeyword: String = ""
     @State private var copiedFixCommandId: String? = nil
     @State private var locallyFixedGroupIds: Set<String> = []
+    @State private var pendingRemediation: PendingRemediation? = nil
+    
+    struct PendingRemediation: Identifiable {
+        let plan: RemediationPlan
+        let groupId: String
+        var id: String { groupId }
+    }
     
     enum SeverityFilter: String, CaseIterable, Identifiable {
         case all = "全部等級"
@@ -65,7 +72,46 @@ public struct SecurityAuditView: View {
         }
     }
     
+    private var remediationDialogShown: Binding<Bool> {
+        Binding(get: { pendingRemediation != nil }, set: { if !$0 { pendingRemediation = nil } })
+    }
+    
+    private func remediationMessage(_ plan: RemediationPlan) -> String {
+        var lines: [String] = []
+        if plan.kind == .migrate {
+            if !plan.toolsToInstall.isEmpty {
+                lines.append("將用新版 Python 安裝到 uv 獨立環境：\(plan.toolsToInstall.joined(separator: "、"))")
+            }
+            if !plan.toolsAlreadyInUV.isEmpty {
+                lines.append("已有獨立環境，不需重裝：\(plan.toolsAlreadyInUV.joined(separator: "、"))")
+            }
+        }
+        lines.append("將從 \(plan.interpreterLabel) 移除 \(plan.packagesToRemove.count) 個套件：\(plan.packagesToRemove.joined(separator: "、"))")
+        lines.append("注意：如果你自己的腳本在該 Python 裡 import 這些套件，移除後會無法執行。新工具的指令會放在 ~/.local/bin。")
+        if plan.kind == .migrate {
+            lines.append("所有新環境安裝成功後才會移除舊的；任何一步失敗都不會動舊環境。")
+        }
+        return lines.joined(separator: "\n\n")
+    }
+    
     public var body: some View {
+        content
+            .confirmationDialog(
+                pendingRemediation.map { $0.plan.kind == .migrate ? "要把 \($0.plan.packageName) 所屬的工具搬到獨立環境嗎？" : "要移除 \($0.plan.packageName) 嗎？" } ?? "",
+                isPresented: remediationDialogShown,
+                titleVisibility: .visible,
+                presenting: pendingRemediation
+            ) { pending in
+                Button(pending.plan.kind == .migrate ? "確認搬移" : "確認移除", role: .destructive) {
+                    Task { await viewModel.executeRemediation(pending.plan, groupId: pending.groupId) }
+                }
+                Button("取消", role: .cancel) {}
+            } message: { pending in
+                Text(remediationMessage(pending.plan))
+            }
+    }
+    
+    private var content: some View {
         VStack(spacing: 0) {
             // Header
             headerBar
@@ -450,6 +496,16 @@ public struct SecurityAuditView: View {
                     .background(Color.white.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 
+                if let env = group.environment {
+                    Text(env.label)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(Theme.infoCyan)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Theme.infoCyan.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+                
                 Spacer()
                 
                 // Primary Action Button (Fixed position at Top-Right of Card)
@@ -627,6 +683,49 @@ public struct SecurityAuditView: View {
                 .padding(.vertical, 6)
                 .background(Theme.warningAmber.opacity(0.10))
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            
+            if let plan = viewModel.remediationPlans[group.id] {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: plan.kind == .migrate ? "arrow.triangle.branch" : "trash")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.primaryIndigo)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(plan.kind == .migrate
+                             ? "可改為：把 \(plan.toolsToInstall.isEmpty ? plan.toolsAlreadyInUV.joined(separator: "、") : (plan.toolsToInstall + plan.toolsAlreadyInUV).joined(separator: "、")) 放進 uv 獨立環境"
+                             : "可改為：直接移除（沒有其他套件依賴它）")
+                            .font(.system(size: 11.5, weight: .semibold))
+                        Text("會從 \(plan.interpreterLabel) 清除 \(plan.packagesToRemove.count) 個套件，確認前不會動作")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Button(action: {
+                        pendingRemediation = PendingRemediation(plan: plan, groupId: group.id)
+                    }) {
+                        Text(plan.kind == .migrate ? "搬到獨立環境" : "移除套件")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 5)
+                            .background(Theme.primaryIndigo)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.bouncy)
+                    .disabled(viewModel.isActionRunning)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Theme.primaryIndigo.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Theme.primaryIndigo.opacity(0.3), lineWidth: 1)
+                )
+            } else if let note = viewModel.remediationNotes[group.id] {
+                Text(note)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
             }
             
             // Tier 4: Interactive Repair Command Chip with 1-click copy

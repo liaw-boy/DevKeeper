@@ -60,6 +60,15 @@ public final class AppViewModel: ObservableObject {
     @Published public var actionStage: String = ""
     @Published public var completedPackageId: String? = nil
     @Published public var fixingVulnId: String? = nil
+    @Published public var pythonInterpreters: [PythonInterpreter] = []
+    @Published public var installablePythons: [PythonRelease] = []
+    @Published public var uvLatestPatches: [String: String] = [:]
+    @Published public var isScanningPython: Bool = false
+    @Published public var pythonActionLabel: String? = nil
+    @Published public var availableManagers: Set<PythonSource> = []
+    /// Alternative fixes (remove / move to an isolated environment), keyed by vulnerability group id.
+    @Published public var remediationPlans: [String: RemediationPlan] = [:]
+    @Published public var remediationNotes: [String: String] = [:]
     /// Reasons why the last fix attempt for a vulnerability group or item did not reach a safe version.
     @Published public var fixFailures: [String: String] = [:]
     @Published public var isFixingAllVulnerabilities: Bool = false
@@ -92,6 +101,7 @@ public final class AppViewModel: ObservableObject {
     public init() {
         Task { [weak self] in
             guard let self = self else { return }
+            await self.scanPythonInterpreters()
             await self.loadSystemInfo()
             await self.autoDiscoverInstalledApps()
             await self.scanAll()
@@ -143,7 +153,7 @@ public final class AppViewModel: ObservableObject {
     public var groupedVulnerabilities: [PackageVulnerabilityGroup] {
         var groups: [String: [VulnerabilityItem]] = [:]
         for v in vulnerabilities {
-            let key = "\(v.ecosystem.lowercased()):\(v.packageName.lowercased()):\(v.projectPath ?? "")"
+            let key = "\(v.ecosystem.lowercased()):\(v.packageName.lowercased()):\(v.projectPath ?? ""):\(v.environment?.pythonPath ?? "")"
             groups[key, default: []].append(v)
         }
         
@@ -182,7 +192,7 @@ public final class AppViewModel: ObservableObject {
         
         let nodeVer = (try? await ShellExecutor.shared.run(command: "node --version"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
         let npmVer = (try? await ShellExecutor.shared.run(command: "npm --version"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
-        let pyVer = (try? await ShellExecutor.shared.run(command: "python3 --version"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
+        let pyVer = (try? await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) --version"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
         let brewVer = (try? await ShellExecutor.shared.run(command: "brew --version | head -n 1"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
         
         self.systemInfo = SystemInfo(
@@ -439,22 +449,29 @@ public final class AppViewModel: ObservableObject {
         var detectedVulns: [VulnerabilityItem] = []
         var seenIds = Set<String>()
         
-        // 1. Audit system npm global packages
-        for pkg in npmPackages.prefix(30) {
-            let vulns = await SecurityService.shared.auditPackage(name: pkg.name, version: pkg.currentVersion, ecosystem: "npm")
-            for v in vulns where !seenIds.contains(v.id) {
-                seenIds.insert(v.id)
-                detectedVulns.append(v)
+        func record(_ vulns: [VulnerabilityItem]) {
+            for v in vulns {
+                let scope = v.environment?.pythonPath ?? v.projectPath ?? ""
+                let key = "\(v.id)|\(v.packageName.lowercased())|\(scope)"
+                if seenIds.insert(key).inserted { detectedVulns.append(v) }
             }
         }
         
-        // 2. Audit system Python packages
-        for pkg in pythonPackages.prefix(30) {
-            let vulns = await SecurityService.shared.auditPackage(name: pkg.name, version: pkg.currentVersion, ecosystem: "PyPI")
-            for v in vulns where !seenIds.contains(v.id) {
-                seenIds.insert(v.id)
-                detectedVulns.append(v)
-            }
+        // 1. Audit system npm global packages
+        record(await auditList(npmPackages.map { ($0.name, $0.currentVersion) }, ecosystem: "npm", environment: nil))
+        
+        // 2. Audit every Python environment: all interpreters (including the old system Python) and uv tool venvs
+        for interpreter in pythonInterpreters where interpreter.hasPip {
+            let env = PythonEnvironmentRef(
+                kind: .interpreter, pythonPath: interpreter.path,
+                label: "Python \(interpreter.version) (\(interpreter.source.rawValue))"
+            )
+            let packages = await PythonEnvironmentService.shared.installedPackages(pythonPath: interpreter.path)
+            record(await auditList(packages, ecosystem: "PyPI", environment: env))
+        }
+        for env in await PythonEnvironmentService.shared.uvToolEnvironments() {
+            let packages = await PythonEnvironmentService.shared.uvToolPackages(pythonPath: env.pythonPath)
+            record(await auditList(packages, ecosystem: "PyPI", environment: env))
         }
         
         // 3. Audit local projects under the user-chosen projects folder (Settings), if any
@@ -466,11 +483,7 @@ public final class AppViewModel: ObservableObject {
                     let hasPkgJson = FileManager.default.fileExists(atPath: sub.appendingPathComponent("package.json").path)
                     let hasReqs = FileManager.default.fileExists(atPath: sub.appendingPathComponent("requirements.txt").path)
                     if hasPkgJson || hasReqs {
-                        let projVulns = await SecurityService.shared.auditProjectDirectory(at: sub)
-                        for v in projVulns where !seenIds.contains(v.id) {
-                            seenIds.insert(v.id)
-                            detectedVulns.append(v)
-                        }
+                        record(await SecurityService.shared.auditProjectDirectory(at: sub))
                     }
                 }
             }
@@ -486,6 +499,144 @@ public final class AppViewModel: ObservableObject {
         } else {
             appendLog("✅ 全面安全稽核完成：本機套件與開發專案均未發現已知 CVE 弱點。")
         }
+    }
+    
+    /// Audits packages against OSV with a small amount of concurrency.
+    private func auditList(_ packages: [(name: String, version: String)], ecosystem: String, environment: PythonEnvironmentRef?) async -> [VulnerabilityItem] {
+        var results: [VulnerabilityItem] = []
+        let batchSize = 8
+        var index = 0
+        while index < packages.count {
+            let batch = Array(packages[index..<min(index + batchSize, packages.count)])
+            index += batchSize
+            let found = await withTaskGroup(of: [VulnerabilityItem].self) { group in
+                for pkg in batch {
+                    group.addTask {
+                        await SecurityService.shared.auditPackage(name: pkg.name, version: pkg.version, ecosystem: ecosystem)
+                    }
+                }
+                var all: [VulnerabilityItem] = []
+                for await items in group { all.append(contentsOf: items) }
+                return all
+            }
+            results.append(contentsOf: environment.map { env in found.map { $0.inEnvironment(env) } } ?? found)
+        }
+        return results
+    }
+    
+    // MARK: - Alternative fixes (remove / move to an isolated environment)
+    
+    /// Newest Python 3.10+ interpreter, used for new uv tool environments.
+    private func newestModernPython() -> PythonInterpreter? {
+        pythonInterpreters.first { $0.hasPip && $0.version.compare("3.10", options: .numeric) != .orderedAscending }
+    }
+    
+    /// Python for new uv tool environments: the newest installed 3.10+ interpreter, or a version uv can download.
+    private func migrationTargetPython() -> String? {
+        if let path = newestModernPython()?.path { return path }
+        guard availableManagers.contains(.uv) else { return nil }
+        return "3.13"
+    }
+    
+    /// Installs uv. Without Homebrew this runs the official installer script, which needs confirmation.
+    public func installUV(confirmedRemoteScript: Bool = false) async {
+        let viaBrew = availableManagers.contains(.homebrew)
+        if !viaBrew && !confirmedRemoteScript {
+            appendLog("已取消安裝 uv：官方安裝腳本需要先確認。")
+            return
+        }
+        await runPythonAction(label: "安裝 uv") {
+            PythonInterpreterService.shared.installUVStream(viaHomebrew: viaBrew)
+        }
+    }
+    
+    /// Works out whether a vulnerable package can be removed, or its tool moved to an isolated environment.
+    public func prepareRemediation(for group: PackageVulnerabilityGroup) async {
+        remediationPlans[group.id] = nil
+        remediationNotes[group.id] = nil
+        guard let env = group.environment, env.kind == .interpreter,
+              let interpreter = pythonInterpreters.first(where: { $0.path == env.pythonPath }) else { return }
+        switch await PythonEnvironmentService.shared.plan(
+            packageName: group.packageName, interpreter: interpreter,
+            targetPython: migrationTargetPython(), uvAvailable: availableManagers.contains(.uv)
+        ) {
+        case .plan(let plan): remediationPlans[group.id] = plan
+        case .unavailable(let reason): remediationNotes[group.id] = reason
+        }
+    }
+    
+    /// Installs tools into uv tool environments (when needed), then removes the old copies.
+    /// Nothing is removed unless every install succeeded.
+    @discardableResult
+    public func executeRemediation(_ plan: RemediationPlan, groupId: String) async -> Bool {
+        guard !isActionRunning else { return false }
+        guard pythonInterpreters.contains(where: { $0.path == plan.interpreterPath }) else {
+            remediationNotes[groupId] = "找不到對應的 Python 環境，請重新掃描。"
+            return false
+        }
+        let allNames = plan.toolsToInstall + plan.toolsAlreadyInUV + plan.packagesToRemove
+        guard allNames.allSatisfy({ InputValidator.isValidPackageName($0) }) else {
+            remediationNotes[groupId] = "套件名稱含不允許的字元，已拒絕。"
+            return false
+        }
+        
+        isActionRunning = true
+        fixingVulnId = groupId
+        pythonActionLabel = plan.kind == .migrate ? "搬到獨立環境" : "移除套件"
+        liveLogOutput = ""
+        defer {
+            isActionRunning = false
+            fixingVulnId = nil
+            pythonActionLabel = nil
+            actionProgress = 0
+            actionStage = ""
+        }
+        
+        if plan.kind == .migrate {
+            guard let target = plan.targetPython,
+                  target.hasPrefix("/") || target.range(of: #"^3\.\d+$"#, options: .regularExpression) != nil else {
+                remediationNotes[groupId] = "沒有可用的新版 Python。"
+                return false
+            }
+            let q = InputValidator.shellQuoted(target)
+            for (i, tool) in plan.toolsToInstall.enumerated() {
+                actionStage = "安裝 \(tool) 到獨立環境 (\(i + 1)/\(plan.toolsToInstall.count))..."
+                appendLog("uv tool install \(tool)（Python：\(target)）")
+                for await chunk in ShellExecutor.shared.stream(command: "uv tool install --python \(q) \(tool)") {
+                    liveLogOutput += chunk
+                }
+                let installed = await PythonEnvironmentService.shared.uvToolEnvironments()
+                let ok = ShellExecutor.shared.lastStreamStatus == 0
+                    && installed.contains { PythonDependencyGraph.normalize($0.toolName ?? "") == PythonDependencyGraph.normalize(tool) }
+                guard ok else {
+                    appendLog("\(tool) 無法安裝到獨立環境，已中止，舊環境沒有任何變動。")
+                    remediationNotes[groupId] = "\(tool) 無法安裝到獨立環境（可能與新版 Python 不相容），已中止，舊環境沒有任何變動。詳見執行日誌。"
+                    return false
+                }
+            }
+        }
+        
+        actionStage = "移除舊環境中的 \(plan.packagesToRemove.count) 個套件..."
+        let py = InputValidator.shellQuoted(plan.interpreterPath)
+        let names = plan.packagesToRemove.joined(separator: " ")
+        appendLog("從 \(plan.interpreterLabel) 移除：\(names)")
+        for await chunk in ShellExecutor.shared.stream(command: "\(py) -m pip uninstall -y \(names)") {
+            liveLogOutput += chunk
+        }
+        guard ShellExecutor.shared.lastStreamStatus == 0 else {
+            appendLog("移除舊套件失敗，請查看執行日誌。")
+            remediationNotes[groupId] = "新環境已就緒，但從舊環境移除套件失敗。詳見執行日誌。"
+            return false
+        }
+        
+        appendLog("\(plan.packageName) 的修復完成（\(plan.kind == .migrate ? "已搬到獨立環境" : "已移除")）。")
+        remediationPlans[groupId] = nil
+        remediationNotes[groupId] = nil
+        fixFailures[groupId] = nil
+        isActionRunning = false
+        await scanPython()
+        await scanSecurityAudit()
+        return true
     }
     
     public func auditLocalProject(at url: URL) async {
@@ -513,7 +664,15 @@ public final class AppViewModel: ObservableObject {
     }
     
     /// Runs a fix command, then checks the installed version instead of trusting the exit status.
-    private func executeFix(command: String, packageName: String, ecosystem: String, targetVersion: String?) async -> FixOutcome {
+    private func executeFix(command: String, packageName: String, ecosystem: String, targetVersion: String?, environment: PythonEnvironmentRef? = nil) async -> FixOutcome {
+        let eco = ecosystem.lowercased()
+        let interpreter = environment.flatMap { env in pythonInterpreters.first { $0.path == env.pythonPath } }
+        if environment?.kind != .uvTool, eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
+            let target = interpreter ?? PythonRuntime.current
+            if let target, target.isExternallyManaged {
+                return .failed("Python \(target.version)（\(target.source.rawValue)）受 PEP 668 保護，不允許用 pip 直接修改。")
+            }
+        }
         var output = ""
         for await chunk in ShellExecutor.shared.stream(command: command) {
             self.liveLogOutput += chunk
@@ -526,7 +685,8 @@ public final class AppViewModel: ObservableObject {
         if lastStatus != 0, isPip, command.contains(">="),
            output.contains("No matching distribution") || output.contains("Could not find a version"),
            let safeName = InputValidator.safeName(packageName) {
-            let fallback = "python3 -m pip install --upgrade \(safeName)"
+            let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
+            let fallback = "\(python) -m pip install --upgrade \(safeName)"
             appendLog("指定的安全版本無法安裝，改裝目前 Python 可用的最新版本：\(fallback)")
             for await chunk in ShellExecutor.shared.stream(command: fallback) {
                 self.liveLogOutput += chunk
@@ -535,7 +695,7 @@ public final class AppViewModel: ObservableObject {
             lastStatus = ShellExecutor.shared.lastStreamStatus
         }
         
-        let installed = await installedVersion(packageName: packageName, ecosystem: ecosystem)
+        let installed = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
         
         if let target = targetVersion, !target.isEmpty {
             if let installed {
@@ -543,7 +703,7 @@ public final class AppViewModel: ObservableObject {
                     return .fixed
                 }
                 if output.contains("Requires-Python") || output.contains("No matching distribution") {
-                    let py = systemInfo.pythonVersion.isEmpty ? "Python" : systemInfo.pythonVersion
+                    let py = interpreter.map { "Python \($0.version)" } ?? (systemInfo.pythonVersion.isEmpty ? "Python" : systemInfo.pythonVersion)
                     return .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(installed) 已是此環境能安裝的最新版。請改用較新的 Python 或自行升級。")
                 }
                 return .failed("升級後版本為 \(installed)，仍低於安全版本 \(target)。")
@@ -552,11 +712,16 @@ public final class AppViewModel: ObservableObject {
         return lastStatus == 0 ? .fixed : .failed("修復指令執行失敗，請查看執行日誌。")
     }
     
-    private func installedVersion(packageName: String, ecosystem: String) async -> String? {
+    private func installedVersion(packageName: String, ecosystem: String, environment: PythonEnvironmentRef? = nil) async -> String? {
         guard let name = InputValidator.safeName(packageName) else { return nil }
         let eco = ecosystem.lowercased()
+        if let environment, environment.kind == .uvTool {
+            let packages = await PythonEnvironmentService.shared.uvToolPackages(pythonPath: environment.pythonPath)
+            return packages.first { PythonDependencyGraph.normalize($0.name) == PythonDependencyGraph.normalize(name) }?.version
+        }
         if eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
-            guard let out = try? await ShellExecutor.shared.run(command: "python3 -m pip show \(name)") else { return nil }
+            let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
+            guard let out = try? await ShellExecutor.shared.run(command: "\(python) -m pip show \(name)") else { return nil }
             return out.components(separatedBy: .newlines)
                 .first { $0.hasPrefix("Version:") }
                 .map { $0.dropFirst("Version:".count).trimmingCharacters(in: .whitespaces) }
@@ -597,7 +762,8 @@ public final class AppViewModel: ObservableObject {
             command: group.fixCommand,
             packageName: group.packageName,
             ecosystem: group.ecosystem,
-            targetVersion: group.targetSafeVersion
+            targetVersion: group.targetSafeVersion,
+            environment: group.environment
         )
         
         if case .failed(let reason) = outcome {
@@ -607,6 +773,7 @@ public final class AppViewModel: ObservableObject {
             self.fixingVulnId = nil
             self.actionProgress = 0.0
             self.actionStage = ""
+            await prepareRemediation(for: group)
             return false
         }
         
@@ -619,7 +786,9 @@ public final class AppViewModel: ObservableObject {
         
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             self.vulnerabilities.removeAll {
-                $0.packageName.lowercased() == group.packageName.lowercased() && $0.projectPath == group.projectPath
+                $0.packageName.lowercased() == group.packageName.lowercased()
+                    && $0.projectPath == group.projectPath
+                    && $0.environment == group.environment
             }
             self.isActionRunning = false
             self.fixingVulnId = nil
@@ -649,7 +818,8 @@ public final class AppViewModel: ObservableObject {
             command: item.fixCommand,
             packageName: item.packageName,
             ecosystem: item.ecosystem,
-            targetVersion: item.fixedVersion
+            targetVersion: item.fixedVersion,
+            environment: item.environment
         )
         
         if case .failed(let reason) = outcome {
@@ -685,30 +855,24 @@ public final class AppViewModel: ObservableObject {
         self.actionProgress = 0.05
         appendLog("啟動批次修復所有可升級之安全弱點...")
         
-        let uniquePackages = Array(Set(vulnerabilities.map { $0.packageName }))
+        let groups = groupedVulnerabilities
         var fixedCount = 0
         var failedCount = 0
-        for (index, pkg) in uniquePackages.enumerated() {
-            guard let vuln = vulnerabilities.first(where: { $0.packageName == pkg }) else { continue }
-            self.actionStage = "正在修復 (\(index + 1)/\(uniquePackages.count)) \(pkg)..."
-            self.actionProgress = Double(index) / Double(max(uniquePackages.count, 1))
-            guard !vuln.fixCommand.isEmpty else {
-                appendLog("略過 \(pkg)：無法自動修復。")
+        for (index, group) in groups.enumerated() {
+            self.actionStage = "正在修復 (\(index + 1)/\(groups.count)) \(group.packageName)..."
+            self.actionProgress = Double(index) / Double(max(groups.count, 1))
+            guard !group.fixCommand.isEmpty else {
+                appendLog("略過 \(group.packageName)：無法自動修復。")
                 continue
             }
-            appendLog("修復套件 \(pkg)：\(vuln.fixCommand)")
+            appendLog("修復套件 \(group.packageName)（\(group.environment?.label ?? "全域")）：\(group.fixCommand)")
             
-            let group = PackageVulnerabilityGroup(
-                packageName: vuln.packageName,
-                ecosystem: vuln.ecosystem,
-                currentVersion: vuln.currentVersion,
-                vulnerabilities: vulnerabilities.filter { $0.packageName == pkg && $0.projectPath == vuln.projectPath }
-            )
             let outcome = await executeFix(
-                command: vuln.fixCommand,
-                packageName: vuln.packageName,
-                ecosystem: vuln.ecosystem,
-                targetVersion: group.targetSafeVersion
+                command: group.fixCommand,
+                packageName: group.packageName,
+                ecosystem: group.ecosystem,
+                targetVersion: group.targetSafeVersion,
+                environment: group.environment
             )
             switch outcome {
             case .fixed:
@@ -717,7 +881,7 @@ public final class AppViewModel: ObservableObject {
             case .failed(let reason):
                 fixFailures[group.id] = reason
                 failedCount += 1
-                appendLog("套件 \(pkg) 修復失敗：\(reason)")
+                appendLog("套件 \(group.packageName) 修復失敗：\(reason)")
             }
         }
         
@@ -769,6 +933,103 @@ public final class AppViewModel: ObservableObject {
         } catch {
             appendLog("npm 掃描失敗: \(error.localizedDescription)")
         }
+    }
+    
+    // MARK: - Python interpreters
+    
+    /// Detects interpreters and applies the saved selection (only paths that were actually discovered).
+    public func scanPythonInterpreters() async {
+        guard !isScanningPython else { return }
+        isScanningPython = true
+        defer { isScanningPython = false }
+        
+        let found = await PythonInterpreterService.shared.discover()
+        self.pythonInterpreters = found
+        applySelectedPython()
+        
+        self.availableManagers = await PythonInterpreterService.shared.availableManagers()
+        self.uvLatestPatches = await PythonInterpreterService.shared.uvLatestPatches()
+        self.installablePythons = await PythonInterpreterService.shared.installableReleases(installed: found)
+    }
+    
+    private func applySelectedPython() {
+        let saved = UserDefaults.standard.string(forKey: PythonRuntime.selectedPathKey) ?? ""
+        PythonRuntime.setCurrent(pythonInterpreters.first { $0.path == saved } ?? automaticPython())
+    }
+    
+    /// Picks a modern interpreter that pip may write to; the old system Python is used only as a last resort.
+    private func automaticPython() -> PythonInterpreter? {
+        let usable = pythonInterpreters.filter { $0.hasPip }
+        let modern = usable.filter { $0.version.compare("3.10", options: .numeric) != .orderedAscending }
+        // pythonInterpreters is sorted newest first.
+        return modern.first { !$0.isExternallyManaged } ?? modern.first ?? usable.first
+    }
+    
+    /// True when the user has not chosen an interpreter and DevKeeper picked one automatically.
+    public var isPythonAutoSelected: Bool {
+        let saved = UserDefaults.standard.string(forKey: PythonRuntime.selectedPathKey) ?? ""
+        return !pythonInterpreters.contains { $0.path == saved }
+    }
+    
+    public var selectedPythonPath: String? { PythonRuntime.current?.path }
+    
+    /// Switches the interpreter used for pip scans and fixes, then rescans.
+    public func selectPython(_ interpreter: PythonInterpreter?) async {
+        guard interpreter == nil || pythonInterpreters.contains(interpreter!) else { return }
+        UserDefaults.standard.set(interpreter?.path ?? "", forKey: PythonRuntime.selectedPathKey)
+        applySelectedPython()
+        appendLog("DevKeeper 改用 Python：\(interpreter.map { "\($0.version) (\($0.source.rawValue))" } ?? "自動選擇")")
+        await loadSystemInfo()
+        await scanPython()
+        await scanSecurityAudit()
+    }
+    
+    /// Latest patch version available for an interpreter, when its manager can tell.
+    public func upgradeTarget(for interpreter: PythonInterpreter) -> String? {
+        switch interpreter.source {
+        case .uv:
+            if let latest = uvLatestPatches[interpreter.minorVersion],
+               latest.compare(interpreter.version, options: .numeric) == .orderedDescending {
+                return latest
+            }
+            return nil
+        case .homebrew:
+            let name = "python@\(interpreter.minorVersion)"
+            return brewPackages.first { $0.name == name && $0.status.isOutdated }?.latestVersion
+        case .pyenv, .system:
+            return nil
+        }
+    }
+    
+    public func upgradePython(_ interpreter: PythonInterpreter) async {
+        await runPythonAction(label: "升級 Python \(interpreter.version) (\(interpreter.source.rawValue))") {
+            PythonInterpreterService.shared.upgradeStream(interpreter)
+        }
+    }
+    
+    public func installPython(_ release: PythonRelease) async {
+        await runPythonAction(label: "安裝 Python \(release.version) (\(release.source.rawValue))") {
+            PythonInterpreterService.shared.installStream(release)
+        }
+    }
+    
+    private func runPythonAction(label: String, stream: () -> AsyncStream<String>) async {
+        guard !isActionRunning else { return }
+        isActionRunning = true
+        pythonActionLabel = label
+        liveLogOutput = ""
+        appendLog("開始\(label)...")
+        
+        for await chunk in stream() {
+            liveLogOutput += chunk
+        }
+        let ok = ShellExecutor.shared.lastStreamStatus == 0
+        appendLog(ok ? "\(label)完成。" : "\(label)失敗，請查看執行日誌。")
+        
+        pythonActionLabel = nil
+        isActionRunning = false
+        await scanPythonInterpreters()
+        if ok { await scanBrew() }
     }
     
     public func scanPython() async {

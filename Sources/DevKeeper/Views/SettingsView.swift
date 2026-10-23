@@ -167,6 +167,11 @@ public struct SettingsView: View {
                     }
                 }
                 
+                // Python 環境：偵測、選擇、升級與安裝版本
+                settingsCard(title: "Python 環境", icon: "chevron.left.forwardslash.chevron.right") {
+                    PythonEnvironmentCard(viewModel: viewModel)
+                }
+                
                 // Section 4: 系統與常駐
                 settingsCard(title: "系統與開機啟動", icon: "macwindow") {
                     settingToggleRow(
