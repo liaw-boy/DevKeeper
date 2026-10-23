@@ -60,6 +60,8 @@ public final class AppViewModel: ObservableObject {
     @Published public var actionStage: String = ""
     @Published public var completedPackageId: String? = nil
     @Published public var fixingVulnId: String? = nil
+    /// Reasons why the last fix attempt for a vulnerability group or item did not reach a safe version.
+    @Published public var fixFailures: [String: String] = [:]
     @Published public var isFixingAllVulnerabilities: Bool = false
     
     @Published public var systemInfo = SystemInfo()
@@ -475,6 +477,9 @@ public final class AppViewModel: ObservableObject {
         }
         
         self.vulnerabilities = detectedVulns
+        // Keep failure reasons only for groups that are still present after the rescan.
+        let stillPresent = Set(groupedVulnerabilities.map { $0.id })
+        self.fixFailures = self.fixFailures.filter { stillPresent.contains($0.key) }
         self.isAuditingSecurity = false
         if !detectedVulns.isEmpty {
             appendLog("⚠️ 全面安全稽核完成：偵測到 \(detectedVulns.count) 個已知安全性弱點 (CVE/GHSA)！")
@@ -502,43 +507,107 @@ public final class AppViewModel: ObservableObject {
         self.isAuditingSecurity = false
     }
     
-    public func fixVulnerabilityGroup(group: PackageVulnerabilityGroup) async {
-        guard !isActionRunning else { return }
-        guard !group.fixCommand.isEmpty else {
-            appendLog("\(group.packageName) 無法自動修復，請手動處理。")
-            return
-        }
-        self.isActionRunning = true
-        self.fixingVulnId = group.id
-        self.actionStage = "正在修復套件 \(group.packageName)..."
-        self.actionProgress = 0.2
-        appendLog("正在修復 \(group.packageName)（涵蓋 \(group.cveList.count) 個弱點），執行：\(group.fixCommand)")
-        
-        self.actionProgress = 0.5
+    private enum FixOutcome {
+        case fixed
+        case failed(String)
+    }
+    
+    /// Runs a fix command, then checks the installed version instead of trusting the exit status.
+    private func executeFix(command: String, packageName: String, ecosystem: String, targetVersion: String?) async -> FixOutcome {
         var output = ""
-        let stream = ShellExecutor.shared.stream(command: group.fixCommand)
-        for await chunk in stream {
+        for await chunk in ShellExecutor.shared.stream(command: command) {
             self.liveLogOutput += chunk
             output += chunk
         }
+        var lastStatus = ShellExecutor.shared.lastStreamStatus
         
-        // If the strict version constraint failed (e.g. Requires-Python on current macOS), fallback to generic upgrade
-        if (output.contains("No matching distribution") || output.contains("Could not find a version")) && group.fixCommand.contains(">=") {
-            let fallbackCommand = "python3 -m pip install --upgrade \(InputValidator.safeName(group.packageName) ?? "")"
-            appendLog("⚠️ 指定修復版本可能不相容當前 Python，改採相容最佳升級：\(fallbackCommand)")
-            let fallbackStream = ShellExecutor.shared.stream(command: fallbackCommand)
-            for await chunk in fallbackStream {
+        // The fixed version may not support this Python; try the newest compatible release as best effort.
+        let isPip = ecosystem.lowercased().contains("pypi") || ecosystem.lowercased().contains("pip")
+        if lastStatus != 0, isPip, command.contains(">="),
+           output.contains("No matching distribution") || output.contains("Could not find a version"),
+           let safeName = InputValidator.safeName(packageName) {
+            let fallback = "python3 -m pip install --upgrade \(safeName)"
+            appendLog("指定的安全版本無法安裝，改裝目前 Python 可用的最新版本：\(fallback)")
+            for await chunk in ShellExecutor.shared.stream(command: fallback) {
                 self.liveLogOutput += chunk
+                output += chunk
             }
+            lastStatus = ShellExecutor.shared.lastStreamStatus
         }
         
-        guard ShellExecutor.shared.lastStreamStatus == 0 else {
-            appendLog("套件 \(group.packageName) 修復失敗，請查看日誌。")
+        let installed = await installedVersion(packageName: packageName, ecosystem: ecosystem)
+        
+        if let target = targetVersion, !target.isEmpty {
+            if let installed {
+                if installed.compare(target, options: .numeric) != .orderedAscending {
+                    return .fixed
+                }
+                if output.contains("Requires-Python") || output.contains("No matching distribution") {
+                    let py = systemInfo.pythonVersion.isEmpty ? "Python" : systemInfo.pythonVersion
+                    return .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(installed) 已是此環境能安裝的最新版。請改用較新的 Python 或自行升級。")
+                }
+                return .failed("升級後版本為 \(installed)，仍低於安全版本 \(target)。")
+            }
+        }
+        return lastStatus == 0 ? .fixed : .failed("修復指令執行失敗，請查看執行日誌。")
+    }
+    
+    private func installedVersion(packageName: String, ecosystem: String) async -> String? {
+        guard let name = InputValidator.safeName(packageName) else { return nil }
+        let eco = ecosystem.lowercased()
+        if eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
+            guard let out = try? await ShellExecutor.shared.run(command: "python3 -m pip show \(name)") else { return nil }
+            return out.components(separatedBy: .newlines)
+                .first { $0.hasPrefix("Version:") }
+                .map { $0.dropFirst("Version:".count).trimmingCharacters(in: .whitespaces) }
+        } else if eco.contains("npm") {
+            guard let out = try? await ShellExecutor.shared.run(command: "npm ls -g \(name) --depth=0 --json"),
+                  let start = out.firstIndex(of: "{"),
+                  let data = String(out[start...]).data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let deps = json["dependencies"] as? [String: Any],
+                  let entry = deps[name] as? [String: Any] else { return nil }
+            return entry["version"] as? String
+        } else if eco.contains("brew") {
+            guard let out = try? await ShellExecutor.shared.run(command: "brew list --versions \(name)") else { return nil }
+            return out.split(separator: " ").last.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+    
+    /// Returns true only when the package actually reached the safe version.
+    @discardableResult
+    public func fixVulnerabilityGroup(group: PackageVulnerabilityGroup) async -> Bool {
+        guard !isActionRunning else { return false }
+        guard !group.fixCommand.isEmpty else {
+            appendLog("\(group.packageName) 無法自動修復，請手動處理。")
+            fixFailures[group.id] = "此套件無法自動修復，請手動處理。"
+            return false
+        }
+        self.isActionRunning = true
+        self.fixingVulnId = group.id
+        self.fixFailures[group.id] = nil
+        self.actionStage = "正在修復套件 \(group.packageName)..."
+        self.actionProgress = 0.2
+        appendLog("正在修復 \(group.packageName)（涵蓋 \(group.cveList.count) 個弱點），執行：\(group.fixCommand)")
+        liveLogOutput = ""
+        
+        self.actionProgress = 0.5
+        let outcome = await executeFix(
+            command: group.fixCommand,
+            packageName: group.packageName,
+            ecosystem: group.ecosystem,
+            targetVersion: group.targetSafeVersion
+        )
+        
+        if case .failed(let reason) = outcome {
+            appendLog("套件 \(group.packageName) 修復失敗：\(reason)")
+            self.fixFailures[group.id] = reason
             self.isActionRunning = false
             self.fixingVulnId = nil
             self.actionProgress = 0.0
             self.actionStage = ""
-            return
+            return false
         }
         
         self.actionProgress = 1.0
@@ -546,10 +615,8 @@ public final class AppViewModel: ObservableObject {
         self.completedPackageId = group.id
         appendLog("套件 \(group.packageName) 修復完成。")
         
-        // Wait 0.65s so user sees the celebration status
         try? await Task.sleep(nanoseconds: 650_000_000)
         
-        // Immediately and smoothly remove from memory so the card smoothly vanishes with native spring animation!
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             self.vulnerabilities.removeAll {
                 $0.packageName.lowercased() == group.packageName.lowercased() && $0.projectPath == group.projectPath
@@ -560,6 +627,7 @@ public final class AppViewModel: ObservableObject {
             self.actionProgress = 0.0
             self.actionStage = ""
         }
+        return true
     }
     
     public func fixVulnerability(item: VulnerabilityItem) async {
@@ -570,18 +638,23 @@ public final class AppViewModel: ObservableObject {
         }
         self.isActionRunning = true
         self.fixingVulnId = item.id
+        self.fixFailures[item.id] = nil
         self.actionStage = "正在修復 \(item.packageName)..."
         self.actionProgress = 0.2
         appendLog("正在修復弱點 \(item.packageName) (\(item.cveId))，執行指令：\(item.fixCommand)")
+        liveLogOutput = ""
         
         self.actionProgress = 0.5
-        let stream = ShellExecutor.shared.stream(command: item.fixCommand)
-        for await chunk in stream {
-            self.liveLogOutput += chunk
-        }
+        let outcome = await executeFix(
+            command: item.fixCommand,
+            packageName: item.packageName,
+            ecosystem: item.ecosystem,
+            targetVersion: item.fixedVersion
+        )
         
-        guard ShellExecutor.shared.lastStreamStatus == 0 else {
-            appendLog("弱點 \(item.packageName) 修復失敗，請查看日誌。")
+        if case .failed(let reason) = outcome {
+            appendLog("弱點 \(item.packageName) 修復失敗：\(reason)")
+            self.fixFailures[item.id] = reason
             self.isActionRunning = false
             self.fixingVulnId = nil
             self.actionProgress = 0.0
@@ -613,6 +686,8 @@ public final class AppViewModel: ObservableObject {
         appendLog("啟動批次修復所有可升級之安全弱點...")
         
         let uniquePackages = Array(Set(vulnerabilities.map { $0.packageName }))
+        var fixedCount = 0
+        var failedCount = 0
         for (index, pkg) in uniquePackages.enumerated() {
             guard let vuln = vulnerabilities.first(where: { $0.packageName == pkg }) else { continue }
             self.actionStage = "正在修復 (\(index + 1)/\(uniquePackages.count)) \(pkg)..."
@@ -623,16 +698,32 @@ public final class AppViewModel: ObservableObject {
             }
             appendLog("修復套件 \(pkg)：\(vuln.fixCommand)")
             
-            for await chunk in ShellExecutor.shared.stream(command: vuln.fixCommand) {
-                self.liveLogOutput += chunk
-            }
-            if ShellExecutor.shared.lastStreamStatus != 0 {
-                appendLog("套件 \(pkg) 修復失敗。")
+            let group = PackageVulnerabilityGroup(
+                packageName: vuln.packageName,
+                ecosystem: vuln.ecosystem,
+                currentVersion: vuln.currentVersion,
+                vulnerabilities: vulnerabilities.filter { $0.packageName == pkg && $0.projectPath == vuln.projectPath }
+            )
+            let outcome = await executeFix(
+                command: vuln.fixCommand,
+                packageName: vuln.packageName,
+                ecosystem: vuln.ecosystem,
+                targetVersion: group.targetSafeVersion
+            )
+            switch outcome {
+            case .fixed:
+                fixFailures[group.id] = nil
+                fixedCount += 1
+            case .failed(let reason):
+                fixFailures[group.id] = reason
+                failedCount += 1
+                appendLog("套件 \(pkg) 修復失敗：\(reason)")
             }
         }
         
+        appendLog("批次修復結束：成功 \(fixedCount) 個，失敗 \(failedCount) 個。")
         self.actionProgress = 1.0
-        self.actionStage = "批次修復完成！正在重新稽核..."
+        self.actionStage = "批次修復結束，正在重新稽核..."
         self.isFixingAllVulnerabilities = false
         self.isActionRunning = false
         

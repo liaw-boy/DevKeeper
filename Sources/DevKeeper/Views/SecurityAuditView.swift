@@ -476,9 +476,10 @@ public struct SecurityAuditView: View {
                 } else {
                     Button(action: {
                         Task {
-                            await viewModel.fixVulnerabilityGroup(group: group)
-                            _ = withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                locallyFixedGroupIds.insert(group.id)
+                            if await viewModel.fixVulnerabilityGroup(group: group) {
+                                _ = withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                                    locallyFixedGroupIds.insert(group.id)
+                                }
                             }
                         }
                     }) {
@@ -610,6 +611,22 @@ public struct SecurityAuditView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.7))
                 }
+            }
+            
+            if let failure = viewModel.fixFailures[group.id] {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(Theme.warningAmber)
+                    Text(failure)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Theme.warningAmber.opacity(0.10))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             
             // Tier 4: Interactive Repair Command Chip with 1-click copy
