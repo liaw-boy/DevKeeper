@@ -195,8 +195,7 @@ public struct MainView: View {
         case .python:
             return viewModel.outdatedPythonCount
         case .pythonVersions:
-            // Interpreters that need attention: end-of-life or upgradable.
-            return viewModel.pythonInterpreters.filter { $0.isEndOfLife || viewModel.upgradeTarget(for: $0) != nil }.count
+            return nil
         case .brew:
             return viewModel.outdatedBrewCount
         case .github:
