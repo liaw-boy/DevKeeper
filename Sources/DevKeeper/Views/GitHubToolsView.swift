@@ -6,6 +6,8 @@ public struct GitHubToolsView: View {
     
     @State private var filterKind: FilterOption = .all
     @State private var showAddSheet: Bool = false
+    @State private var isDiscovering: Bool = false
+    @State private var discoverMessage: String? = nil
     @State private var copiedCommandToolId: String? = nil
     
     // Add Sheet Form States
@@ -112,8 +114,12 @@ public struct GitHubToolsView: View {
                 // Auto discover /Applications
                 Button(action: {
                     Task {
-                        await viewModel.autoDiscoverInstalledApps()
-                        await viewModel.scanGitHubTools()
+                        isDiscovering = true
+                        let added = await viewModel.autoDiscoverInstalledApps()
+                        isDiscovering = false
+                        discoverMessage = added > 0 ? "已加入 \(added) 個應用程式到追蹤清單" : "沒有發現新的 GitHub 應用程式"
+                        try? await Task.sleep(nanoseconds: 3_500_000_000)
+                        discoverMessage = nil
                     }
                 }) {
                     HStack(spacing: 5) {
@@ -133,7 +139,14 @@ public struct GitHubToolsView: View {
                     )
                 }
                 .buttonStyle(.bouncy(scale: 0.97))
-                .disabled(viewModel.isScanning)
+                .disabled(viewModel.isScanning || isDiscovering)
+                
+                if let message = discoverMessage {
+                    Text(message)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary)
+                        .transition(.opacity)
+                }
                 
                 // Add Item Button
                 Button(action: {
@@ -319,7 +332,7 @@ public struct GitHubToolsView: View {
                 }
                 
                 // If outdated, show CLI upgrade command chip with 1-click copy built-in
-                if tool.isOutdated {
+                if tool.isOutdated, !cliUpgradeCommand(for: tool).isEmpty {
                     Button(action: {
                         let cmd = cliUpgradeCommand(for: tool)
                         NSPasteboard.general.clearContents()
@@ -375,7 +388,7 @@ public struct GitHubToolsView: View {
                             if tool.isOutdated {
                                 HStack(spacing: 4) {
                                     Circle().fill(Theme.warningAmber).frame(width: 5.5, height: 5.5)
-                                    Text("可升級至 \(tool.latestVersion ?? "")")
+                                    Text("可升級")
                                         .font(.system(size: 11, weight: .bold))
                                         .foregroundColor(Theme.warningAmber)
                                         .lineLimit(1)
@@ -406,15 +419,16 @@ public struct GitHubToolsView: View {
                                 .clipShape(Capsule())
                         }
                     }
-                    .frame(width: 110, alignment: .trailing)
+                    .frame(width: 80, alignment: .trailing)
                     
-                    // Versions Column (Fixed 130pt width with monospaced tabular digits)
+                    // Versions Column (Fixed 230pt width so full version strings fit)
                     HStack(spacing: 6) {
                         Text(tool.isInstalled ? tool.currentVersion : "—")
                             .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                             .monospacedDigit()
                             .foregroundColor(tool.isInstalled ? .primary : .secondary)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         
                         if let latest = tool.latestVersion, tool.isOutdated {
                             Image(systemName: "arrow.right")
@@ -426,17 +440,18 @@ public struct GitHubToolsView: View {
                                 .monospacedDigit()
                                 .foregroundColor(Theme.warningAmber)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                         }
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Color.white.opacity(0.04))
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .frame(width: 130, alignment: .trailing)
+                    .frame(width: 230, alignment: .trailing)
                 }
-                .frame(width: 250, alignment: .trailing)
+                .frame(width: 318, alignment: .trailing)
                 
-                // Bottom Tier: Action Buttons (Consistently right-aligned in same 250pt frame)
+                // Bottom Tier: Action Buttons (Consistently right-aligned in same 318pt frame)
                 HStack(spacing: 8) {
                     // Primary Action: Download asset (if outdated or not yet installed)
                     if (tool.isOutdated || !tool.isInstalled), let url = InputValidator.httpsURL(tool.assetDownloadUrl, allowedHosts: ["github.com", "githubusercontent.com"]) {
@@ -499,7 +514,7 @@ public struct GitHubToolsView: View {
                     .buttonStyle(.plain)
                     .help("取消追蹤此項目")
                 }
-                .frame(width: 250, alignment: .trailing)
+                .frame(width: 318, alignment: .trailing)
             }
         }
         .padding(.horizontal, 16)
@@ -519,6 +534,13 @@ public struct GitHubToolsView: View {
             ? tool.binaryName.lowercased().replacingOccurrences(of: ".app", with: "")
             : tool.binaryName
         guard let name = InputValidator.safeName(rawName) else { return "" }
+        // Only suggest a brew command when Homebrew actually manages this item;
+        // manually installed apps are updated from the download button instead.
+        let brewType: PackageType = tool.kind == .appBundle ? .brewCask : .brewFormula
+        let isBrewManaged = viewModel.brewPackages.contains {
+            $0.type == brewType && $0.name.lowercased() == name.lowercased()
+        }
+        guard isBrewManaged else { return "" }
         return tool.kind == .appBundle ? "brew upgrade --cask \(name)" : "brew upgrade \(name)"
     }
     

@@ -399,7 +399,8 @@ public final class AppViewModel: ObservableObject {
         appendLog("已新增追蹤 GitHub 項目: \(owner)/\(repo) (\(kind.rawValue))")
     }
     
-    public func autoDiscoverInstalledApps() async {
+    @discardableResult
+    public func autoDiscoverInstalledApps() async -> Int {
         let discovered = GitHubToolService.shared.scanDiscoverableMacApps()
         var addedCount = 0
         for item in discovered {
@@ -419,6 +420,7 @@ public final class AppViewModel: ObservableObject {
         } else {
             appendLog("本機常見之開源 GitHub 應用程式已全數加入追蹤。")
         }
+        return addedCount
     }
     
     public func removeTrackedGitHubTool(item: GitHubToolItem) {
