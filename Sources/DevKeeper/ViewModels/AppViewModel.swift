@@ -153,7 +153,7 @@ public final class AppViewModel: ObservableObject {
     public var groupedVulnerabilities: [PackageVulnerabilityGroup] {
         var groups: [String: [VulnerabilityItem]] = [:]
         for v in vulnerabilities {
-            let key = "\(v.ecosystem.lowercased()):\(v.packageName.lowercased()):\(v.projectPath ?? ""):\(v.environment?.pythonPath ?? "")"
+            let key = "\(v.ecosystem.lowercased()):\(v.packageName.lowercased()):\(v.projectPath ?? "")"
             groups[key, default: []].append(v)
         }
         
@@ -492,7 +492,10 @@ public final class AppViewModel: ObservableObject {
         self.vulnerabilities = detectedVulns
         // Keep failure reasons only for groups that are still present after the rescan.
         let stillPresent = Set(groupedVulnerabilities.map { $0.id })
-        self.fixFailures = self.fixFailures.filter { stillPresent.contains($0.key) }
+        func isCurrent(_ key: String) -> Bool { stillPresent.contains { key.hasPrefix($0 + "|") } }
+        self.fixFailures = self.fixFailures.filter { isCurrent($0.key) }
+        self.remediationPlans = self.remediationPlans.filter { isCurrent($0.key) }
+        self.remediationNotes = self.remediationNotes.filter { isCurrent($0.key) }
         self.isAuditingSecurity = false
         if !detectedVulns.isEmpty {
             appendLog("⚠️ 全面安全稽核完成：偵測到 \(detectedVulns.count) 個已知安全性弱點 (CVE/GHSA)！")
@@ -551,32 +554,33 @@ public final class AppViewModel: ObservableObject {
     }
     
     /// Works out whether a vulnerable package can be removed, or its tool moved to an isolated environment.
-    public func prepareRemediation(for group: PackageVulnerabilityGroup) async {
-        remediationPlans[group.id] = nil
-        remediationNotes[group.id] = nil
-        guard let env = group.environment, env.kind == .interpreter,
+    public func prepareRemediation(for group: PackageVulnerabilityGroup, environment env: PythonEnvironmentRef?) async {
+        let key = group.key(for: env)
+        remediationPlans[key] = nil
+        remediationNotes[key] = nil
+        guard let env, env.kind == .interpreter,
               let interpreter = pythonInterpreters.first(where: { $0.path == env.pythonPath }) else { return }
         switch await PythonEnvironmentService.shared.plan(
             packageName: group.packageName, interpreter: interpreter,
             targetPython: migrationTargetPython(), uvAvailable: availableManagers.contains(.uv)
         ) {
-        case .plan(let plan): remediationPlans[group.id] = plan
-        case .unavailable(let reason): remediationNotes[group.id] = reason
+        case .plan(let plan): remediationPlans[key] = plan
+        case .unavailable(let reason): remediationNotes[key] = reason
         }
     }
     
     /// Installs tools into uv tool environments (when needed), then removes the old copies.
     /// Nothing is removed unless every install succeeded.
     @discardableResult
-    public func executeRemediation(_ plan: RemediationPlan, groupId: String) async -> Bool {
+    public func executeRemediation(_ plan: RemediationPlan, groupId: String, key: String) async -> Bool {
         guard !isActionRunning else { return false }
         guard pythonInterpreters.contains(where: { $0.path == plan.interpreterPath }) else {
-            remediationNotes[groupId] = "找不到對應的 Python 環境，請重新掃描。"
+            remediationNotes[key] = "找不到對應的 Python 環境，請重新掃描。"
             return false
         }
         let allNames = plan.toolsToInstall + plan.toolsAlreadyInUV + plan.packagesToRemove
         guard allNames.allSatisfy({ InputValidator.isValidPackageName($0) }) else {
-            remediationNotes[groupId] = "套件名稱含不允許的字元，已拒絕。"
+            remediationNotes[key] = "套件名稱含不允許的字元，已拒絕。"
             return false
         }
         
@@ -595,7 +599,7 @@ public final class AppViewModel: ObservableObject {
         if plan.kind == .migrate {
             guard let target = plan.targetPython,
                   target.hasPrefix("/") || target.range(of: #"^3\.\d+$"#, options: .regularExpression) != nil else {
-                remediationNotes[groupId] = "沒有可用的新版 Python。"
+                remediationNotes[key] = "沒有可用的新版 Python。"
                 return false
             }
             let q = InputValidator.shellQuoted(target)
@@ -610,7 +614,7 @@ public final class AppViewModel: ObservableObject {
                     && installed.contains { PythonDependencyGraph.normalize($0.toolName ?? "") == PythonDependencyGraph.normalize(tool) }
                 guard ok else {
                     appendLog("\(tool) 無法安裝到獨立環境，已中止，舊環境沒有任何變動。")
-                    remediationNotes[groupId] = "\(tool) 無法安裝到獨立環境（可能與新版 Python 不相容），已中止，舊環境沒有任何變動。詳見執行日誌。"
+                    remediationNotes[key] = "\(tool) 無法安裝到獨立環境（可能與新版 Python 不相容），已中止，舊環境沒有任何變動。詳見執行日誌。"
                     return false
                 }
             }
@@ -625,14 +629,14 @@ public final class AppViewModel: ObservableObject {
         }
         guard ShellExecutor.shared.lastStreamStatus == 0 else {
             appendLog("移除舊套件失敗，請查看執行日誌。")
-            remediationNotes[groupId] = "新環境已就緒，但從舊環境移除套件失敗。詳見執行日誌。"
+            remediationNotes[key] = "新環境已就緒，但從舊環境移除套件失敗。詳見執行日誌。"
             return false
         }
         
         appendLog("\(plan.packageName) 的修復完成（\(plan.kind == .migrate ? "已搬到獨立環境" : "已移除")）。")
-        remediationPlans[groupId] = nil
-        remediationNotes[groupId] = nil
-        fixFailures[groupId] = nil
+        remediationPlans[key] = nil
+        remediationNotes[key] = nil
+        fixFailures[key] = nil
         isActionRunning = false
         await scanPython()
         await scanSecurityAudit()
@@ -740,63 +744,78 @@ public final class AppViewModel: ObservableObject {
         return nil
     }
     
-    /// Returns true only when the package actually reached the safe version.
+    /// Fixes one package in every environment it is installed in.
+    /// Returns true only when every environment actually reached the safe version.
     @discardableResult
     public func fixVulnerabilityGroup(group: PackageVulnerabilityGroup) async -> Bool {
         guard !isActionRunning else { return false }
-        guard !group.fixCommand.isEmpty else {
+        let targets = group.fixTargets
+        guard targets.contains(where: { !$0.command.isEmpty }) else {
             appendLog("\(group.packageName) 無法自動修復，請手動處理。")
-            fixFailures[group.id] = "此套件無法自動修復，請手動處理。"
+            for t in targets { fixFailures[group.key(for: t.environment)] = "此套件無法自動修復，請手動處理。" }
             return false
         }
         self.isActionRunning = true
         self.fixingVulnId = group.id
-        self.fixFailures[group.id] = nil
-        self.actionStage = "正在修復套件 \(group.packageName)..."
-        self.actionProgress = 0.2
-        appendLog("正在修復 \(group.packageName)（涵蓋 \(group.cveList.count) 個弱點），執行：\(group.fixCommand)")
+        self.actionProgress = 0.1
         liveLogOutput = ""
         
-        self.actionProgress = 0.5
-        let outcome = await executeFix(
-            command: group.fixCommand,
-            packageName: group.packageName,
-            ecosystem: group.ecosystem,
-            targetVersion: group.targetSafeVersion,
-            environment: group.environment
-        )
-        
-        if case .failed(let reason) = outcome {
-            appendLog("套件 \(group.packageName) 修復失敗：\(reason)")
-            self.fixFailures[group.id] = reason
-            self.isActionRunning = false
-            self.fixingVulnId = nil
-            self.actionProgress = 0.0
-            self.actionStage = ""
-            await prepareRemediation(for: group)
-            return false
-        }
-        
-        self.actionProgress = 1.0
-        self.actionStage = "修復完成！"
-        self.completedPackageId = group.id
-        appendLog("套件 \(group.packageName) 修復完成。")
-        
-        try? await Task.sleep(nanoseconds: 650_000_000)
-        
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-            self.vulnerabilities.removeAll {
-                $0.packageName.lowercased() == group.packageName.lowercased()
-                    && $0.projectPath == group.projectPath
-                    && $0.environment == group.environment
+        var failedEnvironments: [PythonEnvironmentRef?] = []
+        for (index, target) in targets.enumerated() {
+            let key = group.key(for: target.environment)
+            fixFailures[key] = nil
+            remediationPlans[key] = nil
+            remediationNotes[key] = nil
+            let place = target.environment?.label ?? "全域"
+            guard !target.command.isEmpty else {
+                fixFailures[key] = "這個環境無法自動修復，請手動處理。"
+                failedEnvironments.append(target.environment)
+                continue
             }
-            self.isActionRunning = false
-            self.fixingVulnId = nil
-            self.completedPackageId = nil
-            self.actionProgress = 0.0
-            self.actionStage = ""
+            self.actionStage = "正在修復 \(group.packageName)（\(place)）\(index + 1)/\(targets.count)..."
+            self.actionProgress = 0.1 + 0.8 * Double(index) / Double(targets.count)
+            appendLog("正在修復 \(group.packageName)（\(place)），執行：\(target.command)")
+            
+            let outcome = await executeFix(
+                command: target.command,
+                packageName: group.packageName,
+                ecosystem: group.ecosystem,
+                targetVersion: group.targetSafeVersion,
+                environment: target.environment
+            )
+            switch outcome {
+            case .fixed:
+                appendLog("套件 \(group.packageName)（\(place)）修復完成。")
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                    self.vulnerabilities.removeAll {
+                        $0.packageName.lowercased() == group.packageName.lowercased()
+                            && $0.projectPath == group.projectPath
+                            && $0.environment == target.environment
+                    }
+                }
+            case .failed(let reason):
+                appendLog("套件 \(group.packageName)（\(place)）修復失敗：\(reason)")
+                fixFailures[key] = reason
+                failedEnvironments.append(target.environment)
+            }
         }
-        return true
+        
+        if failedEnvironments.isEmpty {
+            self.actionProgress = 1.0
+            self.actionStage = "修復完成！"
+            self.completedPackageId = group.id
+            try? await Task.sleep(nanoseconds: 650_000_000)
+        }
+        self.isActionRunning = false
+        self.fixingVulnId = nil
+        self.completedPackageId = nil
+        self.actionProgress = 0.0
+        self.actionStage = ""
+        
+        for env in failedEnvironments {
+            await prepareRemediation(for: group, environment: env)
+        }
+        return failedEnvironments.isEmpty
     }
     
     public func fixVulnerability(item: VulnerabilityItem) async {
@@ -856,36 +875,40 @@ public final class AppViewModel: ObservableObject {
         appendLog("啟動批次修復所有可升級之安全弱點...")
         
         let groups = groupedVulnerabilities
+        let jobs = groups.flatMap { group in group.fixTargets.map { (group, $0) } }
         var fixedCount = 0
         var failedCount = 0
-        for (index, group) in groups.enumerated() {
-            self.actionStage = "正在修復 (\(index + 1)/\(groups.count)) \(group.packageName)..."
-            self.actionProgress = Double(index) / Double(max(groups.count, 1))
-            guard !group.fixCommand.isEmpty else {
-                appendLog("略過 \(group.packageName)：無法自動修復。")
+        for (index, job) in jobs.enumerated() {
+            let (group, target) = job
+            let place = target.environment?.label ?? "全域"
+            self.actionStage = "正在修復 (\(index + 1)/\(jobs.count)) \(group.packageName)（\(place)）..."
+            self.actionProgress = Double(index) / Double(max(jobs.count, 1))
+            let key = group.key(for: target.environment)
+            guard !target.command.isEmpty else {
+                appendLog("略過 \(group.packageName)（\(place)）：無法自動修復。")
                 continue
             }
-            appendLog("修復套件 \(group.packageName)（\(group.environment?.label ?? "全域")）：\(group.fixCommand)")
+            appendLog("修復套件 \(group.packageName)（\(place)）：\(target.command)")
             
             let outcome = await executeFix(
-                command: group.fixCommand,
+                command: target.command,
                 packageName: group.packageName,
                 ecosystem: group.ecosystem,
                 targetVersion: group.targetSafeVersion,
-                environment: group.environment
+                environment: target.environment
             )
             switch outcome {
             case .fixed:
-                fixFailures[group.id] = nil
+                fixFailures[key] = nil
                 fixedCount += 1
             case .failed(let reason):
-                fixFailures[group.id] = reason
+                fixFailures[key] = reason
                 failedCount += 1
-                appendLog("套件 \(group.packageName) 修復失敗：\(reason)")
+                appendLog("套件 \(group.packageName)（\(place)）修復失敗：\(reason)")
             }
         }
         
-        appendLog("批次修復結束：成功 \(fixedCount) 個，失敗 \(failedCount) 個。")
+        appendLog("批次修復結束：成功 \(fixedCount) 項，失敗 \(failedCount) 項。")
         self.actionProgress = 1.0
         self.actionStage = "批次修復結束，正在重新稽核..."
         self.isFixingAllVulnerabilities = false

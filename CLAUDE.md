@@ -26,6 +26,8 @@ swift run DevKeeper         # 直接執行（無 .app bundle，版本號會取�
 - **自動重新整理**：`FileSystemWatcher` 用 `DispatchSource` 監看 `/Applications`、Homebrew Cellar/Caskroom、npm global `lib/node_modules` 等目錄（2 秒 debounce）；另有每 30 分鐘 Timer。兩者都在 `isActionRunning` 時跳過，避免與進行中的操作衝突。README 提到 FSEvents，實作是 DispatchSource。
 - **Models/**：`PackageItem`（npm/python/brew 共用）、`AIToolItem`、`GitHubToolItem`、`SecurityItem`、`ExecutionLog`。
 - **Views/**：每個 `NavigationTab` 一個頁面；共用元件在 `Views/Components/`，視覺常數在 `Views/Theme.swift`。`StatusBarController`（Services/）管理選單列項目，內容為 `MenuBarView`。
+- **Python 環境管理**：`PythonInterpreterService` 偵測系統／Homebrew／pyenv／uv 的直譯器（以 realpath 去重；沒有 Xcode 命令列工具時不碰 `/usr/bin/python3` 以免跳系統視窗），`PythonRuntime` 是同步的「目前使用的直譯器」持有者（`PythonService`、`FixCommandBuilder` 等非 async 程式碼組指令時用它），預設自動挑 3.10+ 且可寫入的版本。帶 PEP 668 `EXTERNALLY-MANAGED` 標記的直譯器只讀取、拒絕 pip 寫入。
+- **漏洞修復流程**：`scanSecurityAudit` 掃描每個直譯器與每個 uv tool venv，`VulnerabilityItem.environment` 記錄所在環境；`PackageVulnerabilityGroup` 把同一套件跨環境合併成一張卡（`fixTargets` 每環境一個修復指令，失敗原因與替代方案以 `group.key(for:)` 分環境儲存）。`AppViewModel.executeFix` 修完會實際檢查已安裝版本，不信任 exit status。修不了時 `PythonEnvironmentService.plan` 用 `pip inspect` 相依圖產生「移除」或「搬到 uv tool 獨立環境」計畫（新環境全部成功才移除舊的）。uv tool 環境只升級單一套件（`uv pip install --python`），不用 `uv tool upgrade`（會重新解析整個相依樹）。
 - **App 入口**：`App.swift` 強制深色（`.preferredColorScheme(.dark)`）、隱藏標題列、`.regular` activation policy。
 - **自我更新檢查**：`checkSelfUpdate` 向 GitHub `liaw-boy/DevKeeper` 的最新 release 比對版本，僅提示，不會自動安裝。
 

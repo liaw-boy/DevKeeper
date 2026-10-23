@@ -110,8 +110,18 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     }
 }
 
+/// One fixable location of a package (an environment, or the single global install).
+public struct FixTarget: Identifiable, Sendable {
+    public var id: String { environment?.pythonPath ?? "global" }
+    public let environment: PythonEnvironmentRef?
+    public let currentVersion: String
+    /// Shell command that fixes this location, or "" when it cannot be fixed automatically.
+    public let command: String
+}
+
+/// All vulnerabilities of one package, merged across every environment it is installed in.
 public struct PackageVulnerabilityGroup: Identifiable, Sendable {
-    public var id: String { "\(ecosystem.lowercased()):\(packageName.lowercased()):\(projectPath ?? ""):\(environment?.pythonPath ?? "")" }
+    public var id: String { "\(ecosystem.lowercased()):\(packageName.lowercased()):\(projectPath ?? "")" }
     public let packageName: String
     public let ecosystem: String
     public let currentVersion: String
@@ -119,6 +129,7 @@ public struct PackageVulnerabilityGroup: Identifiable, Sendable {
     public let highestSeverity: VulnerabilitySeverity
     public let cveList: [String]
     public let vulnerabilities: [VulnerabilityItem]
+    public let fixTargets: [FixTarget]
     
     public init(
         packageName: String,
@@ -128,7 +139,6 @@ public struct PackageVulnerabilityGroup: Identifiable, Sendable {
     ) {
         self.packageName = packageName
         self.ecosystem = ecosystem
-        self.currentVersion = currentVersion
         
         // Deduplicate vulnerabilities by cveId
         var uniqueVulns: [VulnerabilityItem] = []
@@ -142,7 +152,7 @@ public struct PackageVulnerabilityGroup: Identifiable, Sendable {
         self.vulnerabilities = uniqueVulns
         self.cveList = uniqueVulns.map { $0.cveId }
         
-        if uniqueVulns.contains(where: { $0.severity == .critical }) {
+        if vulnerabilities.contains(where: { $0.severity == .critical }) {
             self.highestSeverity = .critical
         } else if vulnerabilities.contains(where: { $0.severity == .high }) {
             self.highestSeverity = .high
@@ -156,22 +166,43 @@ public struct PackageVulnerabilityGroup: Identifiable, Sendable {
         
         // Find the single highest safe version across all CVEs for this package
         let fixedList = vulnerabilities.compactMap { $0.fixedVersion }.filter { !$0.isEmpty }
-        if let maxFixed = fixedList.max(by: { a, b in
-            a.compare(b, options: .numeric) == .orderedAscending
-        }) {
-            self.targetSafeVersion = maxFixed
-        } else {
-            self.targetSafeVersion = nil
+        let target = fixedList.max(by: { a, b in a.compare(b, options: .numeric) == .orderedAscending })
+        self.targetSafeVersion = target
+        
+        // One fix target per environment, using the full (un-deduplicated) list so no environment is lost.
+        let projectPath = vulnerabilities.first?.projectPath
+        var seenEnvs = Set<String>()
+        var targets: [FixTarget] = []
+        for v in vulnerabilities {
+            let key = v.environment?.pythonPath ?? "global"
+            guard seenEnvs.insert(key).inserted else { continue }
+            targets.append(FixTarget(
+                environment: v.environment,
+                currentVersion: v.currentVersion,
+                command: FixCommandBuilder.command(
+                    packageName: packageName, ecosystem: ecosystem, targetVersion: target,
+                    projectPath: projectPath, environment: v.environment
+                )
+            ))
         }
+        self.fixTargets = targets
+        // Lowest installed version is the one to show in the header badge.
+        self.currentVersion = targets
+            .map { $0.currentVersion }
+            .min { $0.compare($1, options: .numeric) == .orderedAscending } ?? currentVersion
     }
     
-    /// Shell command that fixes this package, or "" when it cannot be fixed automatically.
-    public var fixCommand: String {
-        FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: targetSafeVersion, projectPath: projectPath, environment: environment)
-    }
+    /// First available fix command (used for display and copy).
+    public var fixCommand: String { fixTargets.first { !$0.command.isEmpty }?.command ?? "" }
+    public var fixCommands: [String] { fixTargets.map { $0.command }.filter { !$0.isEmpty } }
     
     public var projectPath: String? { vulnerabilities.first?.projectPath }
-    public var environment: PythonEnvironmentRef? { vulnerabilities.first?.environment }
+    public var environments: [PythonEnvironmentRef] { fixTargets.compactMap { $0.environment } }
+    
+    /// Key for per-environment state (failures, alternative fixes).
+    public func key(for environment: PythonEnvironmentRef?) -> String {
+        "\(id)|\(environment?.pythonPath ?? "")"
+    }
 }
 
 enum FixCommandBuilder {
@@ -181,10 +212,14 @@ enum FixCommandBuilder {
         let version = targetVersion.flatMap { $0.isEmpty ? nil : $0 }
         if let version, !InputValidator.isValidVersion(version) { return "" }
         
-        // uv tool environments are upgraded as a whole tool; pip is not installed inside them.
+        // uv tool environments: upgrade only the vulnerable package inside the tool's venv.
+        // (`uv tool upgrade` would re-resolve and upgrade the tool's whole dependency tree, which can be gigabytes.)
         if let environment, environment.kind == .uvTool {
-            guard let tool = environment.toolName, InputValidator.isValidPackageName(tool) else { return "" }
-            return "uv tool upgrade \(tool)"
+            let python = InputValidator.shellQuoted(environment.pythonPath)
+            if let version {
+                return "uv pip install --python \(python) --upgrade \"\(packageName)>=\(version)\""
+            }
+            return "uv pip install --python \(python) --upgrade \(packageName)"
         }
         
         let eco = ecosystem.lowercased()

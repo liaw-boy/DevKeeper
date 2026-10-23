@@ -14,7 +14,8 @@ public struct SecurityAuditView: View {
     struct PendingRemediation: Identifiable {
         let plan: RemediationPlan
         let groupId: String
-        var id: String { groupId }
+        let key: String
+        var id: String { key }
     }
     
     enum SeverityFilter: String, CaseIterable, Identifiable {
@@ -103,7 +104,7 @@ public struct SecurityAuditView: View {
                 presenting: pendingRemediation
             ) { pending in
                 Button(pending.plan.kind == .migrate ? "確認搬移" : "確認移除", role: .destructive) {
-                    Task { await viewModel.executeRemediation(pending.plan, groupId: pending.groupId) }
+                    Task { await viewModel.executeRemediation(pending.plan, groupId: pending.groupId, key: pending.key) }
                 }
                 Button("取消", role: .cancel) {}
             } message: { pending in
@@ -466,6 +467,92 @@ public struct SecurityAuditView: View {
     }
     
     // MARK: - Vulnerability Group Card (Integrated & Consolidated)
+    /// Version, failure reason and alternative fixes for one environment of a package.
+    @ViewBuilder
+    private func targetStatus(group: PackageVulnerabilityGroup, target: FixTarget) -> some View {
+        let key = group.key(for: target.environment)
+        let multi = group.fixTargets.count > 1
+        let prefix = (multi ? target.environment?.label.appending("：") : nil) ?? ""
+        
+        if multi {
+            HStack(spacing: 6) {
+                Text(target.environment?.label ?? "全域")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(Theme.infoCyan)
+                Text(target.currentVersion)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Theme.dangerRed)
+                if let safe = group.targetSafeVersion {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(Theme.successGreen)
+                    Text(safe)
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(Theme.successGreen)
+                }
+            }
+        }
+        
+        if let failure = viewModel.fixFailures[key] {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(Theme.warningAmber)
+                Text(prefix + failure)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Theme.warningAmber.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        
+        if let plan = viewModel.remediationPlans[key] {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: plan.kind == .migrate ? "arrow.triangle.branch" : "trash")
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.primaryIndigo)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plan.kind == .migrate
+                         ? "可改為：把 \((plan.toolsToInstall + plan.toolsAlreadyInUV).joined(separator: "、")) 放進 uv 獨立環境"
+                         : "可改為：直接移除（沒有其他套件依賴它）")
+                        .font(.system(size: 11.5, weight: .semibold))
+                    Text("會從 \(plan.interpreterLabel) 清除 \(plan.packagesToRemove.count) 個套件，確認前不會動作")
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button(action: {
+                    pendingRemediation = PendingRemediation(plan: plan, groupId: group.id, key: key)
+                }) {
+                    Text(plan.kind == .migrate ? "搬到獨立環境" : "移除套件")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(Theme.primaryIndigo)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.bouncy)
+                .disabled(viewModel.isActionRunning)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Theme.primaryIndigo.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(Theme.primaryIndigo.opacity(0.3), lineWidth: 1)
+            )
+        } else if let note = viewModel.remediationNotes[key] {
+            Text(prefix + note)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+    }
+    
     private func vulnerabilityGroupCard(group: PackageVulnerabilityGroup) -> some View {
         let isFixing = viewModel.isActionRunning && viewModel.fixingVulnId == group.id
         let isCompleted = viewModel.completedPackageId == group.id
@@ -496,7 +583,7 @@ public struct SecurityAuditView: View {
                     .background(Color.white.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 
-                if let env = group.environment {
+                ForEach(group.environments, id: \.pythonPath) { env in
                     Text(env.label)
                         .font(.system(size: 9.5, weight: .semibold))
                         .foregroundColor(Theme.infoCyan)
@@ -669,70 +756,15 @@ public struct SecurityAuditView: View {
                 }
             }
             
-            if let failure = viewModel.fixFailures[group.id] {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(Theme.warningAmber)
-                    Text(failure)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(Theme.warningAmber.opacity(0.10))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            }
-            
-            if let plan = viewModel.remediationPlans[group.id] {
-                HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: plan.kind == .migrate ? "arrow.triangle.branch" : "trash")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.primaryIndigo)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(plan.kind == .migrate
-                             ? "可改為：把 \(plan.toolsToInstall.isEmpty ? plan.toolsAlreadyInUV.joined(separator: "、") : (plan.toolsToInstall + plan.toolsAlreadyInUV).joined(separator: "、")) 放進 uv 獨立環境"
-                             : "可改為：直接移除（沒有其他套件依賴它）")
-                            .font(.system(size: 11.5, weight: .semibold))
-                        Text("會從 \(plan.interpreterLabel) 清除 \(plan.packagesToRemove.count) 個套件，確認前不會動作")
-                            .font(.system(size: 10.5))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    Button(action: {
-                        pendingRemediation = PendingRemediation(plan: plan, groupId: group.id)
-                    }) {
-                        Text(plan.kind == .migrate ? "搬到獨立環境" : "移除套件")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 5)
-                            .background(Theme.primaryIndigo)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.bouncy)
-                    .disabled(viewModel.isActionRunning)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Theme.primaryIndigo.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Theme.primaryIndigo.opacity(0.3), lineWidth: 1)
-                )
-            } else if let note = viewModel.remediationNotes[group.id] {
-                Text(note)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+            ForEach(group.fixTargets) { target in
+                targetStatus(group: group, target: target)
             }
             
             // Tier 4: Interactive Repair Command Chip with 1-click copy
             if !group.fixCommand.isEmpty {
             Button(action: {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(group.fixCommand, forType: .string)
+                NSPasteboard.general.setString(group.fixCommands.joined(separator: "\n"), forType: .string)
                 copiedFixCommandId = group.id
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
                     if copiedFixCommandId == group.id { copiedFixCommandId = nil }
@@ -746,6 +778,11 @@ public struct SecurityAuditView: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
+                    if group.fixCommands.count > 1 {
+                        Text("+\(group.fixCommands.count - 1) 個環境")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary.opacity(0.8))
+                    }
                     
                     Image(systemName: copiedFixCommandId == group.id ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 9))
