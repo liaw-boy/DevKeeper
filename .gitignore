@@ -1,0 +1,6 @@
+.build/
+DevKeeper.app/
+DevKeeper.dmg
+.DS_Store
+*.xcodeproj
+.env
