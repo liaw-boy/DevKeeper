@@ -99,6 +99,8 @@ public struct MainView: View {
                     NpmListView(viewModel: viewModel)
                 case .python:
                     PythonListView(viewModel: viewModel)
+                case .pythonVersions:
+                    PythonVersionsView(viewModel: viewModel)
                 case .brew:
                     BrewListView(viewModel: viewModel)
                 case .github:
@@ -192,6 +194,9 @@ public struct MainView: View {
             return viewModel.outdatedNpmCount
         case .python:
             return viewModel.outdatedPythonCount
+        case .pythonVersions:
+            // Interpreters that need attention: end-of-life or upgradable.
+            return viewModel.pythonInterpreters.filter { $0.isEndOfLife || viewModel.upgradeTarget(for: $0) != nil }.count
         case .brew:
             return viewModel.outdatedBrewCount
         case .github:

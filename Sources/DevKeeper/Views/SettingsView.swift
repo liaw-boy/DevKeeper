@@ -168,8 +168,22 @@ public struct SettingsView: View {
                 }
                 
                 // Python 環境：偵測、選擇、升級與安裝版本
-                settingsCard(title: "Python 環境", icon: "chevron.left.forwardslash.chevron.right") {
-                    PythonEnvironmentCard(viewModel: viewModel)
+                settingsCard(title: "Python 版本", icon: "square.stack.3d.up") {
+                    HStack(spacing: 10) {
+                        Text("Python 版本的偵測、升級、安裝與選用，已移到側邊欄的「Python 版本」頁面。")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(action: { viewModel.selectedTab = .pythonVersions }) {
+                            Text("前往")
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .background(Color.white.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(.bouncy)
+                    }
                 }
                 
                 // Section 4: 系統與常駐
