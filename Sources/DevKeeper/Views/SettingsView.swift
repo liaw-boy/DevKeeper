@@ -9,7 +9,7 @@ public struct SettingsView: View {
     @AppStorage("checkSelfUpdate") private var checkSelfUpdate: Bool = true
     @AppStorage("enableSecurityAudit") private var enableSecurityAudit: Bool = true
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = true
-    @AppStorage("gitHubToken") private var gitHubToken: String = ""
+    @State private var gitHubToken: String = TokenStore.load()
     @AppStorage("projectsRootPath") private var projectsRootPath: String = ""
     
     @State private var tokenTestStatus: String? = nil
@@ -121,6 +121,9 @@ public struct SettingsView: View {
                                         .stroke(Theme.subtleBorder, lineWidth: 1)
                                 )
                                 .frame(maxWidth: .infinity)
+                                .onChange(of: gitHubToken) { _, newValue in
+                                    TokenStore.save(newValue)
+                                }
                             
                             Button(action: {
                                 testGitHubToken()

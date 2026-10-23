@@ -55,7 +55,8 @@ public final class GitHubReleaseService: @unchecked Sendable {
     
     /// Checks latest release for a given repository (e.g. "cli/cli" or "liaw-boy/DevKeeper")
     public func fetchLatestRelease(owner: String, repo: String) async -> GitHubReleaseInfo? {
-        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest") else {
+        guard InputValidator.isValidRepoComponent(owner), InputValidator.isValidRepoComponent(repo),
+              let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest") else {
             return nil
         }
         

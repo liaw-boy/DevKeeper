@@ -202,7 +202,7 @@ public struct PackageDetailSheet: View {
             
             // Bottom Action Footer
             HStack(spacing: 12) {
-                if let homepage = package.homepage, let url = URL(string: homepage) {
+                if let url = InputValidator.httpsURL(package.homepage) {
                     Link(destination: url) {
                         HStack(spacing: 5) {
                             Image(systemName: "safari")

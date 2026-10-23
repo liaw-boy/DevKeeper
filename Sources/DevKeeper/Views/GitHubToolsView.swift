@@ -439,7 +439,7 @@ public struct GitHubToolsView: View {
                 // Bottom Tier: Action Buttons (Consistently right-aligned in same 250pt frame)
                 HStack(spacing: 8) {
                     // Primary Action: Download asset (if outdated or not yet installed)
-                    if (tool.isOutdated || !tool.isInstalled), let downloadUrl = tool.assetDownloadUrl, let url = URL(string: downloadUrl) {
+                    if (tool.isOutdated || !tool.isInstalled), let url = InputValidator.httpsURL(tool.assetDownloadUrl, allowedHosts: ["github.com", "githubusercontent.com"]) {
                         Button(action: {
                             NSWorkspace.shared.open(url)
                         }) {
@@ -460,7 +460,7 @@ public struct GitHubToolsView: View {
                     }
                     
                     // GitHub Release Page
-                    if let htmlUrl = tool.htmlUrl, let url = URL(string: htmlUrl) {
+                    if let url = InputValidator.httpsURL(tool.htmlUrl, allowedHosts: ["github.com"]) {
                         Button(action: {
                             NSWorkspace.shared.open(url)
                         }) {
@@ -515,12 +515,11 @@ public struct GitHubToolsView: View {
     }
     
     private func cliUpgradeCommand(for tool: GitHubToolItem) -> String {
-        if tool.kind == .appBundle {
-            let appName = tool.binaryName.lowercased().replacingOccurrences(of: ".app", with: "")
-            return "brew upgrade --cask \(appName)"
-        } else {
-            return "brew upgrade \(tool.binaryName)"
-        }
+        let rawName = tool.kind == .appBundle
+            ? tool.binaryName.lowercased().replacingOccurrences(of: ".app", with: "")
+            : tool.binaryName
+        guard let name = InputValidator.safeName(rawName) else { return "" }
+        return tool.kind == .appBundle ? "brew upgrade --cask \(name)" : "brew upgrade \(name)"
     }
     
     // MARK: - Empty State View

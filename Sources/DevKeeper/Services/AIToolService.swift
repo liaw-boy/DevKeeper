@@ -114,7 +114,7 @@ public final class AIToolService: @unchecked Sendable {
             if let pathOutput = try? await ShellExecutor.shared.run(command: "which codex 2>/dev/null || which openai 2>/dev/null") {
                 let path = pathOutput.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !path.isEmpty && !path.contains("not found") {
-                    let verOutput = try? await ShellExecutor.shared.run(command: "\(path) --version 2>&1")
+                    let verOutput = try? await ShellExecutor.shared.run(command: "\(InputValidator.shellQuoted(path)) --version 2>&1")
                     let ver = extractVersion(from: verOutput ?? "")
                     return (true, ver.isEmpty ? "已安裝" : ver, path)
                 }
@@ -128,7 +128,8 @@ public final class AIToolService: @unchecked Sendable {
             let path = pathOutput.trimmingCharacters(in: .whitespacesAndNewlines)
             if !path.isEmpty && !path.contains("not found") {
                 // Try getting version
-                let verOutput = try? await ShellExecutor.shared.run(command: "\(path) --version 2>&1 || \(path) -v 2>&1")
+                let quoted = InputValidator.shellQuoted(path)
+                let verOutput = try? await ShellExecutor.shared.run(command: "\(quoted) --version 2>&1 || \(quoted) -v 2>&1")
                 let ver = extractVersion(from: verOutput ?? "")
                 return (true, ver.isEmpty ? "已安裝" : ver, path)
             }

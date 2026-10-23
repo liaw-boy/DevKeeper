@@ -353,6 +353,11 @@ public final class AppViewModel: ObservableObject {
         kind: GitHubToolKind = .cli,
         appPath: String? = nil
     ) async {
+        guard InputValidator.isValidRepoComponent(owner), InputValidator.isValidRepoComponent(repo),
+              binaryName.map({ $0.isEmpty || InputValidator.isValidPackageName($0) }) ?? true else {
+            appendLog("已拒絕新增 GitHub 項目：owner、repo 或程式名稱含不允許的字元。")
+            return
+        }
         var tools = self.githubTools
         if let idx = tools.firstIndex(where: { $0.owner.lowercased() == owner.lowercased() && $0.repo.lowercased() == repo.lowercased() }) {
             tools[idx].appPath = appPath ?? tools[idx].appPath
@@ -509,7 +514,7 @@ public final class AppViewModel: ObservableObject {
         
         // If the strict version constraint failed (e.g. Requires-Python on current macOS), fallback to generic upgrade
         if (output.contains("No matching distribution") || output.contains("Could not find a version")) && group.fixCommand.contains(">=") {
-            let fallbackCommand = "python3 -m pip install --upgrade \(group.packageName)"
+            let fallbackCommand = "python3 -m pip install --upgrade \(InputValidator.safeName(group.packageName) ?? "")"
             appendLog("⚠️ 指定修復版本可能不相容當前 Python，改採相容最佳升級：\(fallbackCommand)")
             let fallbackStream = ShellExecutor.shared.stream(command: fallbackCommand)
             for await chunk in fallbackStream {

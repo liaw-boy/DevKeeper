@@ -225,7 +225,7 @@ public struct OverviewView: View {
                         
                         Spacer()
                         
-                        if let urlString = viewModel.appDownloadUrl, let url = URL(string: urlString) {
+                        if let url = InputValidator.httpsURL(viewModel.appDownloadUrl, allowedHosts: ["github.com"]) {
                             Link(destination: url) {
                                 HStack(spacing: 5) {
                                     Image(systemName: "arrow.down.circle")

@@ -23,12 +23,17 @@ public final class GitHubToolService: @unchecked Sendable {
               let items = try? JSONDecoder().decode([GitHubToolItem].self, from: data) else {
             return defaultSuggestedTools()
         }
-        return items
+        // Stored values are re-validated because the file can be edited outside the app.
+        return items.filter {
+            InputValidator.isValidRepoComponent($0.owner)
+                && InputValidator.isValidRepoComponent($0.repo)
+                && ($0.binaryName.isEmpty || InputValidator.isValidPackageName($0.binaryName))
+        }
     }
     
     public func saveTrackedTools(_ items: [GitHubToolItem]) {
         if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: storageUrl)
+            try? data.write(to: storageUrl, options: .atomic)
         }
     }
     
@@ -112,12 +117,13 @@ public final class GitHubToolService: @unchecked Sendable {
     
     /// Inspect CLI binary in PATH
     private func detectLocalCLI(item: GitHubToolItem) async -> (isInstalled: Bool, version: String, resolvedPath: String?) {
-        let bin = item.binaryName
+        guard let bin = InputValidator.safeName(item.binaryName) else { return (false, "未安裝", nil) }
         do {
             let pathOutput = try await ShellExecutor.shared.run(command: "which \(bin)")
             let path = pathOutput.trimmingCharacters(in: .whitespacesAndNewlines)
             if !path.isEmpty && !path.contains("not found") {
-                let verOutput = try? await ShellExecutor.shared.run(command: "\(path) --version 2>&1 || \(path) -v 2>&1")
+                let quoted = InputValidator.shellQuoted(path)
+                let verOutput = try? await ShellExecutor.shared.run(command: "\(quoted) --version 2>&1 || \(quoted) -v 2>&1")
                 let verString = parseVersion(from: verOutput ?? "")
                 return (true, verString.isEmpty ? "已安裝" : verString, path)
             }
@@ -134,7 +140,8 @@ public final class GitHubToolService: @unchecked Sendable {
         assetDownloadUrl: String?,
         assetName: String?
     ) {
-        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest") else {
+        guard InputValidator.isValidRepoComponent(owner), InputValidator.isValidRepoComponent(repo),
+              let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest") else {
             return (nil, nil, nil, nil, nil)
         }
         
@@ -142,8 +149,9 @@ public final class GitHubToolService: @unchecked Sendable {
         request.setValue("DevKeeper-MacApp", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
         
-        // Include user token if configured in UserDefaults
-        if let token = UserDefaults.standard.string(forKey: "gitHubToken"), !token.isEmpty {
+        // Include user token (stored in the Keychain) if configured
+        let token = TokenStore.load()
+        if !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         

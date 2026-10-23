@@ -103,6 +103,7 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
     }
     
     public var upgradeCommand: String {
+        guard InputValidator.isValidPackageName(name) else { return "" }
         switch type {
         case .brewFormula:
             return "brew upgrade \(name)"

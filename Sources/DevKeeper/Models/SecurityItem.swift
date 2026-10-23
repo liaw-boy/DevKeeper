@@ -64,21 +64,16 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     }
     
     public var osvUrl: URL? {
-        if let advisoryUrl = advisoryUrl, let url = URL(string: advisoryUrl), advisoryUrl.contains("osv.dev") {
+        if let url = InputValidator.httpsURL(advisoryUrl, allowedHosts: ["osv.dev"]) {
             return url
         }
-        if !id.isEmpty {
-            return URL(string: "https://osv.dev/vulnerability/\(id)")
-        }
-        if !cveId.isEmpty {
-            return URL(string: "https://osv.dev/vulnerability/\(cveId)")
-        }
-        return nil
+        if let url = Self.osvUrl(for: id) { return url }
+        return Self.osvUrl(for: cveId)
     }
     
     public static func osvUrl(for identifier: String) -> URL? {
         let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard trimmed.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil else { return nil }
         return URL(string: "https://osv.dev/vulnerability/\(trimmed)")
     }
 }
