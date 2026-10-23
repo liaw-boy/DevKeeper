@@ -76,6 +76,8 @@ public final class AppViewModel: ObservableObject {
     /// Backup folder per venv path created by a successful rebuild.
     @Published public var venvBackups: [String: String] = [:]
     @Published public var rebuildingVenvPath: String? = nil
+    /// Number of vulnerabilities hidden because the user accepted the risk.
+    @Published public var ignoredCount: Int = 0
     /// Alternative fixes (remove / move to an isolated environment), keyed by vulnerability group id.
     @Published public var remediationPlans: [String: RemediationPlan] = [:]
     @Published public var remediationNotes: [String: String] = [:]
@@ -501,6 +503,10 @@ public final class AppViewModel: ObservableObject {
             }
         }
         
+        let ignored = ignoredKeys
+        let visible = detectedVulns.filter { !ignored.contains(Self.ignoreKey($0)) }
+        self.ignoredCount = detectedVulns.count - visible.count
+        detectedVulns = visible
         self.vulnerabilities = detectedVulns
         // Keep failure reasons only for groups that are still present after the rescan.
         let stillPresent = Set(groupedVulnerabilities.map { $0.id })
@@ -815,6 +821,44 @@ public final class AppViewModel: ObservableObject {
         }
         appendLog("替代修復結束：成功 \(succeeded) 項，失敗 \(failed) 項。重新掃描中...")
         await scanPython()
+        await scanSecurityAudit()
+    }
+    
+    // MARK: - Accepted risks
+    
+    private static let ignoredKeysDefaults = "ignoredVulnerabilityKeys"
+    
+    /// An ignore applies to one package at one installed version in one place; upgrading it ends the ignore.
+    private static func ignoreKey(_ v: VulnerabilityItem) -> String {
+        "\(v.ecosystem.lowercased())|\(v.packageName.lowercased())@\(v.currentVersion)|\(v.environment?.pythonPath ?? v.projectPath ?? "")"
+    }
+    
+    private var ignoredKeys: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: Self.ignoredKeysDefaults) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: Self.ignoredKeysDefaults) }
+    }
+    
+    /// Hides a package's vulnerabilities in one environment (a known risk that cannot be fixed there).
+    public func ignoreRisk(group: PackageVulnerabilityGroup, environment: PythonEnvironmentRef?) {
+        let targets = vulnerabilities.filter {
+            $0.packageName.lowercased() == group.packageName.lowercased()
+                && $0.projectPath == group.projectPath && $0.environment == environment
+        }
+        guard !targets.isEmpty else { return }
+        var keys = ignoredKeys
+        for v in targets { keys.insert(Self.ignoreKey(v)) }
+        ignoredKeys = keys
+        withAnimation {
+            vulnerabilities.removeAll { v in targets.contains { $0.id == v.id && $0.environment == v.environment && $0.packageName == v.packageName } }
+        }
+        ignoredCount += targets.count
+        appendLog("已忽略 \(group.packageName)（\(environment?.label ?? "全域")）的 \(targets.count) 個已知風險。")
+    }
+    
+    /// Shows every ignored risk again.
+    public func restoreIgnoredRisks() async {
+        ignoredKeys = []
+        ignoredCount = 0
         await scanSecurityAudit()
     }
     

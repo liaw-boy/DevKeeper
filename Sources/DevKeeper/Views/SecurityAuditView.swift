@@ -138,9 +138,11 @@ public struct SecurityAuditView: View {
                     // Security Health Banner
                     if viewModel.vulnerabilities.isEmpty {
                         cleanHealthBanner
+                        ignoredNotice
                     } else {
                         vulnerabilitiesDetectedBanner
                         fixProgressBar
+                        ignoredNotice
                     }
                     
                     // Vulnerability List (Consolidated One Card per Package)
@@ -435,6 +437,30 @@ public struct SecurityAuditView: View {
         }
     }
     
+    @ViewBuilder
+    private var ignoredNotice: some View {
+        if viewModel.ignoredCount > 0 {
+            HStack(spacing: 8) {
+                Image(systemName: "eye.slash")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Text("已忽略 \(viewModel.ignoredCount) 個無法修復的已知風險")
+                    .font(.system(size: 11.5))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(action: { Task { await viewModel.restoreIgnoredRisks() } }) {
+                    Text("全部還原")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.bouncy)
+            }
+        }
+    }
+    
     private var vulnerabilitiesDetectedBanner: some View {
         HStack(spacing: 14) {
             Image(systemName: "exclamationmark.shield.fill")
@@ -548,6 +574,18 @@ public struct SecurityAuditView: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(action: { viewModel.ignoreRisk(group: group, environment: target.environment) }) {
+                    Text("忽略此風險")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.bouncy)
+                .help("這個版本的 Python 裝不到修復版本。忽略後不再列入警告；升級該套件後會自動重新檢查。")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
