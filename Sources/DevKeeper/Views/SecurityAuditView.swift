@@ -444,7 +444,7 @@ public struct SecurityAuditView: View {
                 Image(systemName: "eye.slash")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                Text("已忽略 \(viewModel.ignoredCount) 個無法修復的已知風險")
+                Text("已忽略 \(viewModel.ignoredCount) 個無法修復的已知風險（含系統內建 Python 附的 pip、setuptools、wheel）")
                     .font(.system(size: 11.5))
                     .foregroundColor(.secondary)
                 Spacer()

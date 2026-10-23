@@ -35,7 +35,7 @@ struct PythonEnvironmentCard: View {
     
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("DevKeeper 掃描與修復 pip 套件時使用的 Python。系統內建的 Python 屬於 macOS，無法升級；建議使用仍在支援期內的版本（目前建議 3.13）。")
+            Text("這台電腦上所有的 Python 版本。DevKeeper 會自動選用最新且仍在支援期內的版本；系統內建的 Python 屬於 macOS，無法升級。目前建議使用 Python \(PythonLifecycle.recommendedMinor)。")
                 .font(.system(size: 11.5))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -43,7 +43,6 @@ struct PythonEnvironmentCard: View {
             if !viewModel.endOfLifePythons.isEmpty { endOfLifeBanner }
             
             VStack(spacing: 6) {
-                autoRow
                 ForEach(viewModel.pythonInterpreters) { interpreter in
                     interpreterRow(interpreter)
                 }
@@ -84,76 +83,37 @@ struct PythonEnvironmentCard: View {
     
     // MARK: - Rows
     
-    private var autoRow: some View {
-        let isSelected = viewModel.isPythonAutoSelected
-        let current = viewModel.selectedPythonPath.flatMap { path in
-            viewModel.pythonInterpreters.first { $0.path == path }
-        }
-        return Button {
-            Task { await viewModel.selectPython(nil) }
-        } label: {
-            HStack(spacing: 10) {
-                radio(isSelected)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("自動選擇（建議）")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundColor(.primary)
-                    Text(current.map { "目前選用 Python \($0.version)（\($0.source.rawValue)）" } ?? "尚無可用的 Python")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .rowBackground(selected: isSelected)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(viewModel.isActionRunning)
-    }
-    
     private func interpreterRow(_ interpreter: PythonInterpreter) -> some View {
-        let isSelected = !viewModel.isPythonAutoSelected && viewModel.selectedPythonPath == interpreter.path
         let isInUse = viewModel.selectedPythonPath == interpreter.path
         let target = viewModel.upgradeTarget(for: interpreter)
-        return HStack(spacing: 10) {
-            Button {
-                Task { await viewModel.selectPython(interpreter) }
-            } label: {
-                HStack(spacing: 10) {
-                    radio(isSelected)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text("Python \(interpreter.version)")
-                                .font(.system(size: 12.5, weight: .semibold))
-                                .foregroundColor(.primary)
-                            badge(interpreter.source.rawValue, tint: Theme.infoCyan)
-                            if interpreter.isExternallyManaged {
-                                badge("受管理 (PEP 668)", tint: Theme.warningAmber)
-                                    .help("此 Python 禁止直接用 pip 修改套件，只能讀取與掃描。")
-                            }
-                            lifecycleBadge(interpreter)
-                            if isInUse {
-                                badge("使用中", tint: Theme.successGreen)
-                            }
-                            if !interpreter.hasPip {
-                                badge("無 pip", tint: Theme.dangerRed)
-                            }
-                        }
-                        Text(interpreter.path)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundColor(.secondary.opacity(0.8))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text("Python \(interpreter.version)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                    badge(interpreter.source.rawValue, tint: Theme.infoCyan)
+                    lifecycleBadge(interpreter)
+                    if isInUse {
+                        badge("DevKeeper 使用中", tint: Theme.successGreen)
                     }
-                    Spacer(minLength: 8)
+                    if interpreter.isExternallyManaged {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary)
+                            .help("受系統保護：這個 Python 禁止用 pip 直接安裝或修改套件（PEP 668），請改用虛擬環境。")
+                    }
+                    if !interpreter.hasPip {
+                        badge("無 pip", tint: Theme.dangerRed)
+                    }
                 }
-                .contentShape(Rectangle())
+                Text(interpreter.path)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundColor(.secondary.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .buttonStyle(.plain)
-            .disabled(viewModel.isActionRunning || !interpreter.hasPip)
-            
+            Spacer(minLength: 8)
             if let target {
                 pillButton("升級至 \(target)", icon: "arrow.up.circle", prominent: true) {
                     Task { await viewModel.upgradePython(interpreter) }
@@ -169,9 +129,14 @@ struct PythonEnvironmentCard: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .rowBackground(selected: isSelected)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(isInUse ? Theme.successGreen.opacity(0.05) : Color.white.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isInUse ? Theme.successGreen.opacity(0.3) : Theme.subtleBorder, lineWidth: 1)
+        )
     }
     
     // MARK: - Lifecycle
@@ -335,17 +300,6 @@ struct PythonEnvironmentCard: View {
     }
     
     // MARK: - Pieces
-    
-    private func radio(_ selected: Bool) -> some View {
-        ZStack {
-            Circle()
-                .stroke(selected ? Theme.primaryIndigo : Color.white.opacity(0.25), lineWidth: 1.5)
-                .frame(width: 15, height: 15)
-            if selected {
-                Circle().fill(Theme.primaryIndigo).frame(width: 7.5, height: 7.5)
-            }
-        }
-    }
     
     private func badge(_ text: String, tint: Color) -> some View {
         Text(text)

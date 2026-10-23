@@ -504,7 +504,7 @@ public final class AppViewModel: ObservableObject {
         }
         
         let ignored = ignoredKeys
-        let visible = detectedVulns.filter { !ignored.contains(Self.ignoreKey($0)) }
+        let visible = detectedVulns.filter { !ignored.contains(Self.ignoreKey($0)) && !isBuiltInException($0) }
         self.ignoredCount = detectedVulns.count - visible.count
         detectedVulns = visible
         self.vulnerabilities = detectedVulns
@@ -838,6 +838,19 @@ public final class AppViewModel: ObservableObject {
         set { UserDefaults.standard.set(Array(newValue), forKey: Self.ignoredKeysDefaults) }
     }
     
+    private static let showBuiltInExceptionsDefaults = "showBuiltInPythonExceptions"
+    
+    /// Built-in exception: pip, setuptools and wheel inside the OS-provided Python (the one Apple ships with
+    /// Xcode / Command Line Tools). Users cannot upgrade that Python, and the fixed versions need a newer one,
+    /// so these are hidden by default instead of showing an unfixable warning on every Mac with Xcode.
+    private func isBuiltInException(_ v: VulnerabilityItem) -> Bool {
+        guard !UserDefaults.standard.bool(forKey: Self.showBuiltInExceptionsDefaults),
+              let env = v.environment, env.kind == .interpreter,
+              let interpreter = pythonInterpreters.first(where: { $0.path == env.pythonPath }),
+              interpreter.source == .system else { return false }
+        return PythonDependencyGraph.baseTooling.contains(PythonDependencyGraph.normalize(v.packageName))
+    }
+    
     /// Hides a package's vulnerabilities in one environment (a known risk that cannot be fixed there).
     public func ignoreRisk(group: PackageVulnerabilityGroup, environment: PythonEnvironmentRef?) {
         let targets = vulnerabilities.filter {
@@ -858,6 +871,7 @@ public final class AppViewModel: ObservableObject {
     /// Shows every ignored risk again.
     public func restoreIgnoredRisks() async {
         ignoredKeys = []
+        UserDefaults.standard.set(true, forKey: Self.showBuiltInExceptionsDefaults)
         ignoredCount = 0
         await scanSecurityAudit()
     }
@@ -1202,8 +1216,9 @@ public final class AppViewModel: ObservableObject {
     }
     
     private func applySelectedPython() {
-        let saved = UserDefaults.standard.string(forKey: PythonRuntime.selectedPathKey) ?? ""
-        PythonRuntime.setCurrent(pythonInterpreters.first { $0.path == saved } ?? automaticPython())
+        // DevKeeper always uses the best supported interpreter; drop any selection saved by older versions.
+        UserDefaults.standard.removeObject(forKey: PythonRuntime.selectedPathKey)
+        PythonRuntime.setCurrent(automaticPython())
     }
     
     /// Picks a modern interpreter that pip may write to; the old system Python is used only as a last resort.
@@ -1214,24 +1229,7 @@ public final class AppViewModel: ObservableObject {
         return supported.first { !$0.isExternallyManaged } ?? supported.first ?? usable.first
     }
     
-    /// True when the user has not chosen an interpreter and DevKeeper picked one automatically.
-    public var isPythonAutoSelected: Bool {
-        let saved = UserDefaults.standard.string(forKey: PythonRuntime.selectedPathKey) ?? ""
-        return !pythonInterpreters.contains { $0.path == saved }
-    }
-    
     public var selectedPythonPath: String? { PythonRuntime.current?.path }
-    
-    /// Switches the interpreter used for pip scans and fixes, then rescans.
-    public func selectPython(_ interpreter: PythonInterpreter?) async {
-        guard interpreter == nil || pythonInterpreters.contains(interpreter!) else { return }
-        UserDefaults.standard.set(interpreter?.path ?? "", forKey: PythonRuntime.selectedPathKey)
-        applySelectedPython()
-        appendLog("DevKeeper 改用 Python：\(interpreter.map { "\($0.version) (\($0.source.rawValue))" } ?? "自動選擇")")
-        await loadSystemInfo()
-        await scanPython()
-        await scanSecurityAudit()
-    }
     
     /// Latest patch version available for an interpreter, when its manager can tell.
     public func upgradeTarget(for interpreter: PythonInterpreter) -> String? {
