@@ -8,7 +8,6 @@ public enum NavigationTab: String, CaseIterable, Identifiable, Sendable {
     case python = "Python 套件"
     case pythonVersions = "Python 版本"
     case brew = "Homebrew"
-    case github = "GitHub 軟體與工具"
     case database = "資料庫服務"
     case security = "安全弱點稽核"
     case console = "執行日誌"
@@ -24,7 +23,6 @@ public enum NavigationTab: String, CaseIterable, Identifiable, Sendable {
         case .python: return "chevron.left.forwardslash.chevron.right"
         case .pythonVersions: return "square.stack.3d.up"
         case .brew: return "shippingbox"
-        case .github: return "arrow.down.circle"
         case .database: return "cylinder.split.1x2"
         case .security: return "shield.checkered"
         case .console: return "terminal"
@@ -49,13 +47,10 @@ public final class AppViewModel: ObservableObject {
     @Published public var pythonPackages: [PackageItem] = []
     @Published public var brewPackages: [PackageItem] = []
     @Published public var databaseServices: [DatabaseServiceItem] = []
-    @Published public var githubTools: [GitHubToolItem] = []
     @Published public var vulnerabilities: [VulnerabilityItem] = []
     
     @Published public var isScanning: Bool = false
     @Published public var isAuditingSecurity: Bool = false
-    @Published public var isCheckingGitHubReleases: Bool = false
-    @Published public var gitHubCheckSuccessMessage: String? = nil
     @Published public var isActionRunning: Bool = false
     @Published public var currentActionPackageId: String? = nil
     @Published public var actionProgress: Double = 0.0
@@ -117,7 +112,6 @@ public final class AppViewModel: ObservableObject {
             guard let self = self else { return }
             await self.scanPythonInterpreters()
             await self.loadSystemInfo()
-            await self.autoDiscoverInstalledApps()
             await self.scanAll()
             
             // Start automatic file system watcher for real-time external change detection
@@ -154,10 +148,6 @@ public final class AppViewModel: ObservableObject {
     
     public var outdatedBrewCount: Int {
         brewPackages.filter { $0.status.isOutdated }.count
-    }
-    
-    public var outdatedGitHubCount: Int {
-        githubTools.filter { $0.isOutdated }.count
     }
     
     public var vulnerabilityCount: Int {
@@ -198,7 +188,7 @@ public final class AppViewModel: ObservableObject {
     }
     
     public var totalOutdatedCount: Int {
-        outdatedAIToolCount + outdatedNpmCount + outdatedPythonCount + outdatedBrewCount + outdatedGitHubCount
+        outdatedAIToolCount + outdatedNpmCount + outdatedPythonCount + outdatedBrewCount
     }
     
     public func loadSystemInfo() async {
@@ -228,10 +218,9 @@ public final class AppViewModel: ObservableObject {
         async let pyTask = scanPython()
         async let brewTask = scanBrew()
         async let dbTask = scanDatabases()
-        async let ghTask = scanGitHubTools()
         async let selfUpdateTask = checkSelfUpdate()
         
-        _ = await (aiTask, npmTask, pyTask, brewTask, dbTask, ghTask, selfUpdateTask)
+        _ = await (aiTask, npmTask, pyTask, brewTask, dbTask, selfUpdateTask)
         
         self.lastScanDate = Date()
         self.isScanning = false
@@ -312,147 +301,6 @@ public final class AppViewModel: ObservableObject {
         self.currentActionPackageId = nil
         
         await scanAITools()
-    }
-    
-    public func scanGitHubTools() async {
-        guard !isCheckingGitHubReleases else { return }
-        self.isCheckingGitHubReleases = true
-        self.gitHubCheckSuccessMessage = nil
-        appendLog("正在檢查 GitHub Releases 最新發布版本與本機應用程式狀態...")
-        
-        let tools = GitHubToolService.shared.loadTrackedTools()
-        var updatedTools: [GitHubToolItem] = []
-        
-        // Concurrent inspection with task group for high responsiveness
-        await withTaskGroup(of: GitHubToolItem.self) { group in
-            for item in tools {
-                group.addTask {
-                    var mutable = item
-                    let local = await GitHubToolService.shared.detectLocalTool(item: mutable)
-                    mutable.isInstalled = local.isInstalled
-                    mutable.currentVersion = local.version
-                    if mutable.kind == .appBundle {
-                        mutable.appPath = local.resolvedPath
-                    } else {
-                        mutable.binaryPath = local.resolvedPath
-                    }
-                    
-                    let remote = await GitHubToolService.shared.checkRemoteRelease(owner: mutable.owner, repo: mutable.repo)
-                    mutable.latestVersion = remote.latestVersion
-                    mutable.htmlUrl = remote.releaseUrl
-                    mutable.releaseNotes = remote.releaseNotes
-                    mutable.assetDownloadUrl = remote.assetDownloadUrl
-                    mutable.assetName = remote.assetName
-                    mutable.lastChecked = Date()
-                    return mutable
-                }
-            }
-            
-            for await item in group {
-                updatedTools.append(item)
-            }
-        }
-        
-        // Preserve stable original order
-        let sorted = tools.compactMap { orig in updatedTools.first(where: { $0.id == orig.id }) }
-        self.githubTools = sorted.isEmpty ? updatedTools : sorted
-        GitHubToolService.shared.saveTrackedTools(self.githubTools)
-        
-        let outdatedCount = self.githubTools.filter { $0.isOutdated }.count
-        if outdatedCount > 0 {
-            appendLog("✅ GitHub Releases 檢查完成：發現 \(outdatedCount) 個軟體有新版本可用！")
-            self.gitHubCheckSuccessMessage = "發現 \(outdatedCount) 個可升級軟體"
-        } else {
-            appendLog("✅ GitHub Releases 檢查完成：所有已追蹤項目皆為最新版本。")
-            self.gitHubCheckSuccessMessage = "所有項目皆為最新版本"
-        }
-        
-        self.isCheckingGitHubReleases = false
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            if self?.gitHubCheckSuccessMessage != nil {
-                self?.gitHubCheckSuccessMessage = nil
-            }
-        }
-    }
-    
-    public func addTrackedGitHubTool(owner: String, repo: String, binaryName: String?) async {
-        await addTrackedGitHubItem(owner: owner, repo: repo, binaryName: binaryName, kind: .cli, appPath: nil)
-    }
-    
-    public func addTrackedGitHubItem(
-        owner: String,
-        repo: String,
-        binaryName: String?,
-        kind: GitHubToolKind = .cli,
-        appPath: String? = nil
-    ) async {
-        guard InputValidator.isValidRepoComponent(owner), InputValidator.isValidRepoComponent(repo),
-              binaryName.map({ $0.isEmpty || InputValidator.isValidPackageName($0) }) ?? true else {
-            appendLog("已拒絕新增 GitHub 項目：owner、repo 或程式名稱含不允許的字元。")
-            return
-        }
-        var tools = self.githubTools
-        if let idx = tools.firstIndex(where: { $0.owner.lowercased() == owner.lowercased() && $0.repo.lowercased() == repo.lowercased() }) {
-            tools[idx].appPath = appPath ?? tools[idx].appPath
-            tools[idx].kind = kind
-            self.githubTools = tools
-            GitHubToolService.shared.saveTrackedTools(tools)
-            return
-        }
-        
-        var newTool = GitHubToolItem(owner: owner, repo: repo, binaryName: binaryName, kind: kind, appPath: appPath)
-        let local = await GitHubToolService.shared.detectLocalTool(item: newTool)
-        newTool.isInstalled = local.isInstalled
-        newTool.currentVersion = local.version
-        if kind == .appBundle {
-            newTool.appPath = local.resolvedPath
-        } else {
-            newTool.binaryPath = local.resolvedPath
-        }
-        
-        let remote = await GitHubToolService.shared.checkRemoteRelease(owner: owner, repo: repo)
-        newTool.latestVersion = remote.latestVersion
-        newTool.htmlUrl = remote.releaseUrl
-        newTool.releaseNotes = remote.releaseNotes
-        newTool.assetDownloadUrl = remote.assetDownloadUrl
-        newTool.assetName = remote.assetName
-        newTool.lastChecked = Date()
-        
-        tools.append(newTool)
-        self.githubTools = tools
-        GitHubToolService.shared.saveTrackedTools(tools)
-        appendLog("已新增追蹤 GitHub 項目: \(owner)/\(repo) (\(kind.rawValue))")
-    }
-    
-    @discardableResult
-    public func autoDiscoverInstalledApps() async -> Int {
-        let discovered = GitHubToolService.shared.scanDiscoverableMacApps()
-        var addedCount = 0
-        for item in discovered {
-            if !self.githubTools.contains(where: { $0.owner.lowercased() == item.owner.lowercased() && $0.repo.lowercased() == item.repo.lowercased() }) {
-                await addTrackedGitHubItem(
-                    owner: item.owner,
-                    repo: item.repo,
-                    binaryName: item.binaryName,
-                    kind: .appBundle,
-                    appPath: item.appPath
-                )
-                addedCount += 1
-            }
-        }
-        if addedCount > 0 {
-            appendLog("自動偵測並加入 \(addedCount) 個本機安裝之開源 GitHub Mac 應用程式！")
-        } else {
-            appendLog("本機常見之開源 GitHub 應用程式已全數加入追蹤。")
-        }
-        return addedCount
-    }
-    
-    public func removeTrackedGitHubTool(item: GitHubToolItem) {
-        self.githubTools.removeAll(where: { $0.id == item.id })
-        GitHubToolService.shared.saveTrackedTools(self.githubTools)
-        appendLog("已取消追蹤: \(item.owner)/\(item.repo)")
     }
     
     public func scanSecurityAudit() async {

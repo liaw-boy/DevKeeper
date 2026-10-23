@@ -10,11 +10,8 @@ public struct SettingsView: View {
     @AppStorage("enableSecurityAudit") private var enableSecurityAudit: Bool = true
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = true
     @AppStorage(StatusBarController.showStatusItemKey) private var showStatusBarItem: Bool = true
-    @State private var gitHubToken: String = TokenStore.load()
     @AppStorage("projectsRootPath") private var projectsRootPath: String = ""
     
-    @State private var tokenTestStatus: String? = nil
-    @State private var isTestingToken: Bool = false
     
     public init(viewModel: AppViewModel) {
         self.viewModel = viewModel
@@ -97,95 +94,6 @@ public struct SettingsView: View {
                     )
                 }
                 
-                // Section 3: GitHub API 授權與私人儲存庫存取
-                settingsCard(title: "GitHub API 授權與私人儲存庫", icon: "key.fill") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("GitHub Personal Access Token (選填)")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.primary)
-                            Text("1. 私人儲存庫存取：若您追蹤的 App 發布在私人 Repo，需提供具備 repo 讀取權限之 Token\n2. 頻率額度擴充：未填時訪客上限 60 次/小時（易超額）；填入後大幅提升至 5,000 次/小時")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        HStack(spacing: 10) {
-                            SecureField("ghp_xxxxxxxxxxxx 或 github_pat_xxxxxxxxxxxx", text: $gitHubToken)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 12, design: .monospaced))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(Color.white.opacity(0.04))
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .stroke(Theme.subtleBorder, lineWidth: 1)
-                                )
-                                .frame(maxWidth: .infinity)
-                                .onChange(of: gitHubToken) { _, newValue in
-                                    TokenStore.save(newValue)
-                                }
-                            
-                            Button(action: {
-                                testGitHubToken()
-                            }) {
-                                HStack(spacing: 4) {
-                                    if isTestingToken {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else {
-                                        Image(systemName: "checkmark.circle")
-                                            .font(.system(size: 11))
-                                        Text("驗證 Token")
-                                            .font(.system(size: 11.5, weight: .semibold))
-                                    }
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(Color.white.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            }
-                            .buttonStyle(.bouncy)
-                            .disabled(gitHubToken.trimmingCharacters(in: .whitespaces).isEmpty || isTestingToken)
-                        }
-                        
-                        if let status = tokenTestStatus {
-                            Text(status)
-                                .font(.system(size: 11.5))
-                                .foregroundColor(status.contains("成功") ? Theme.successGreen : Theme.dangerRed)
-                        }
-                        
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(Color.secondary)
-                            Text("提示：若追蹤的 GitHub App 或 CLI 工具皆為公開 (Public) 儲存庫，保持留空亦可正常運作。")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.top, 2)
-                    }
-                }
-                
-                // Python 環境：偵測、選擇、升級與安裝版本
-                settingsCard(title: "Python 版本", icon: "square.stack.3d.up") {
-                    HStack(spacing: 10) {
-                        Text("Python 版本的偵測、升級、安裝與選用，已移到側邊欄的「Python 版本」頁面。")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button(action: { viewModel.selectedTab = .pythonVersions }) {
-                            Text("前往")
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 5)
-                                .background(Color.white.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                        .buttonStyle(.bouncy)
-                    }
-                }
-                
                 // Section 4: 系統與常駐
                 settingsCard(title: "系統與開機啟動", icon: "macwindow") {
                     settingToggleRow(
@@ -204,7 +112,7 @@ public struct SettingsView: View {
                     )
                 }
                 
-                // 本機專案資料夾（供安全稽核與 GitHub 應用程式偵測使用）
+                // 本機專案資料夾（供安全稽核與專案虛擬環境重建使用）
                 settingsCard(title: "本機專案資料夾", icon: "folder") {
                     HStack(spacing: 10) {
                         Text(projectsRootPath.isEmpty ? "尚未設定（不掃描本機專案）" : projectsRootPath)
@@ -248,7 +156,7 @@ public struct SettingsView: View {
                             Text("版本 \(AppViewModel.appVersion) (Build \(AppViewModel.appBuild)) • 原生 Swift 6.4 + SwiftUI")
                                 .font(.system(size: 11.5))
                                 .foregroundColor(.secondary)
-                            Text("整合 Homebrew、npm、Python、GitHub Releases 與 Google OSV 安全稽核")
+                            Text("整合 Homebrew、npm、Python 與 Google OSV 安全稽核")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary.opacity(0.8))
                         }
@@ -308,33 +216,5 @@ public struct SettingsView: View {
         }
     }
     
-    private func testGitHubToken() {
-        isTestingToken = true
-        tokenTestStatus = nil
-        
-        Task {
-            guard let url = URL(string: "https://api.github.com/user") else {
-                isTestingToken = false
-                return
-            }
-            var request = URLRequest(url: url)
-            let trimmedToken = gitHubToken.trimmingCharacters(in: .whitespaces)
-            request.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("DevKeeper-MacApp", forHTTPHeaderField: "User-Agent")
-            
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                if let http = response as? HTTPURLResponse, http.statusCode == 200,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let login = json["login"] as? String {
-                    tokenTestStatus = "驗證成功！已成功連結至 GitHub 帳號: @\(login)，API 頻率額度已擴充至 5,000 次/小時。"
-                } else {
-                    tokenTestStatus = "驗證失敗，請確認 Token 是否具有足夠權限或輸入是否正確。"
-                }
-            } catch {
-                tokenTestStatus = "網路請求失敗: \(error.localizedDescription)"
-            }
-            isTestingToken = false
-        }
-    }
+
 }

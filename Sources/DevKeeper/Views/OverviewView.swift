@@ -333,12 +333,12 @@ public struct OverviewView: View {
                     )
                     
                     compactMetricCard(
-                        title: "GitHub 軟體與 App",
-                        count: viewModel.githubTools.count,
-                        outdated: viewModel.outdatedGitHubCount,
-                        symbol: "arrow.down.circle",
+                        title: "Python 版本",
+                        count: viewModel.pythonInterpreters.count,
+                        outdated: viewModel.endOfLifePythons.count,
+                        symbol: "square.stack.3d.up",
                         tint: Theme.primaryIndigo,
-                        tab: .github
+                        tab: .pythonVersions
                     )
                     
                     compactMetricCard(

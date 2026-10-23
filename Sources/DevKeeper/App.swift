@@ -7,6 +7,7 @@ struct DevKeeperApp: App {
     @State private var statusBarController: StatusBarController?
     
     init() {
+        LegacyCleanup.run()
         NSApplication.shared.setActivationPolicy(.regular)
     }
     

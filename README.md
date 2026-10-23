@@ -39,7 +39,7 @@ DevKeeper 是一款專為 macOS 量身打造的原生開發者套件與版本管
 * 受 PEP 668 保護的 Python（`EXTERNALLY-MANAGED`）只讀取與掃描，不會用 pip 直接修改。
 
 #### 關於系統內建 Python（Xcode / 命令列工具）
-* macOS 本身不附 Python 3。`/usr/bin/python3` 只是轉接頭，真正的 Python 3.9.6 來自 **Xcode 命令列工具**（或 Xcode.app），主要供 LLDB 等 Apple 開發工具使用。版本由 Apple 決定，使用者無法單獨升級；3.9 已於 2025-10-31 終止支援。
+* macOS 本身不附 Python 3。`/usr/bin/python3` 只是轉接頭，真正的 Python（例如 3.9.6，實際版本依你的 Xcode 或命令列工具而定）是 Apple 編譯後放在 **Xcode 命令列工具**或 `Xcode.app` 的 `Python3.framework` 裡，由 `/usr/bin/python3` 依「目前使用的開發工具」（`xcode-select -p`）轉接過去，推測主要供 LLDB 等 Apple 開發工具使用。版本由 Apple 決定，使用者無法單獨升級；例如 Python 3.9 已於 2025-10-31 終止支援。
 * 它附帶的 `pip`、`setuptools`、`wheel` 版本較舊，而這些套件的修復版本都要求 Python 3.10 以上，無法在該 Python 內修復。
 * DevKeeper 的處理方式：
   * 沒有安裝命令列工具時，不會執行 `/usr/bin/python3`，避免跳出系統的「安裝開發者工具」視窗。

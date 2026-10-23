@@ -142,7 +142,6 @@ public struct MenuBarView: View {
             categoryCard("AI 開發工具", "sparkles", Theme.primaryIndigo, viewModel.aiTools.count, viewModel.outdatedAIToolCount, .aiTools)
             categoryCard("Homebrew", "shippingbox", Theme.warningAmber, viewModel.brewPackages.count, viewModel.outdatedBrewCount, .brew)
             categoryCard("Python (pip)", "chevron.left.forwardslash.chevron.right", Theme.successGreen, viewModel.pythonPackages.count, viewModel.outdatedPythonCount, .python)
-            categoryCard("GitHub 軟體與工具", "arrow.down.circle", Theme.primaryIndigo, viewModel.githubTools.count, viewModel.outdatedGitHubCount, .github)
             categoryCard("npm 全域工具", "cube", Theme.infoCyan, viewModel.npmPackages.count, viewModel.outdatedNpmCount, .npm)
         }
     }

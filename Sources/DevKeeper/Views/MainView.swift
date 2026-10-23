@@ -103,8 +103,6 @@ public struct MainView: View {
                     PythonVersionsView(viewModel: viewModel)
                 case .brew:
                     BrewListView(viewModel: viewModel)
-                case .github:
-                    GitHubToolsView(viewModel: viewModel)
                 case .database:
                     DatabaseListView(viewModel: viewModel)
                 case .security:
@@ -135,19 +133,10 @@ public struct MainView: View {
             }
         }) {
             HStack(spacing: 11) {
-                // Larger Icon container + Official GitHub Logo Support
-                Group {
-                    if tab == .github {
-                        GitHubMarkShape()
-                            .fill(isSelected ? Theme.primaryIndigo : Color.secondary)
-                            .frame(width: 17, height: 17)
-                    } else {
-                        Image(systemName: tab.sfSymbol)
-                            .font(.system(size: 16.5, weight: isSelected ? .semibold : .medium))
-                            .foregroundColor(isSelected ? Theme.primaryIndigo : .secondary)
-                    }
-                }
-                .frame(width: 22, height: 22, alignment: .center)
+                Image(systemName: tab.sfSymbol)
+                    .font(.system(size: 16.5, weight: isSelected ? .semibold : .medium))
+                    .foregroundColor(isSelected ? Theme.primaryIndigo : .secondary)
+                    .frame(width: 22, height: 22, alignment: .center)
                 
                 Text(tab.rawValue)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
@@ -198,8 +187,6 @@ public struct MainView: View {
             return nil
         case .brew:
             return viewModel.outdatedBrewCount
-        case .github:
-            return viewModel.outdatedGitHubCount
         case .security:
             return viewModel.vulnerabilityCount
         case .database, .console, .settings:
