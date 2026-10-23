@@ -4,6 +4,7 @@ import SwiftUI
 struct PythonEnvironmentCard: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var showUVConfirm = false
+    @State private var uvConfirmIsForUpgrade = false
     
     private var needsUV: Bool {
         !viewModel.isScanningPython && !viewModel.availableManagers.contains(.uv)
@@ -17,7 +18,14 @@ struct PythonEnvironmentCard: View {
                 titleVisibility: .visible
             ) {
                 Button("確認並執行", role: .destructive) {
-                    Task { await viewModel.installUV(confirmedRemoteScript: true) }
+                    let forUpgrade = uvConfirmIsForUpgrade
+                    Task {
+                        if forUpgrade {
+                            await viewModel.upgradeToRecommendedPython(confirmedRemoteScript: true)
+                        } else {
+                            await viewModel.installUV(confirmedRemoteScript: true)
+                        }
+                    }
                 }
                 Button("取消", role: .cancel) {}
             } message: {
@@ -27,10 +35,12 @@ struct PythonEnvironmentCard: View {
     
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("DevKeeper 掃描與修復 pip 套件時使用的 Python。系統內建的舊版 Python 屬於 macOS，無法升級；建議使用 3.10 以上的版本。")
+            Text("DevKeeper 掃描與修復 pip 套件時使用的 Python。系統內建的 Python 屬於 macOS，無法升級；建議使用仍在支援期內的版本（目前建議 3.13）。")
                 .font(.system(size: 11.5))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            
+            if !viewModel.endOfLifePythons.isEmpty { endOfLifeBanner }
             
             VStack(spacing: 6) {
                 autoRow
@@ -121,6 +131,7 @@ struct PythonEnvironmentCard: View {
                                 badge("受管理 (PEP 668)", tint: Theme.warningAmber)
                                     .help("此 Python 禁止直接用 pip 修改套件，只能讀取與掃描。")
                             }
+                            lifecycleBadge(interpreter)
                             if isInUse {
                                 badge("使用中", tint: Theme.successGreen)
                             }
@@ -161,6 +172,69 @@ struct PythonEnvironmentCard: View {
         .rowBackground(selected: isSelected)
     }
     
+    // MARK: - Lifecycle
+    
+    @ViewBuilder
+    private func lifecycleBadge(_ interpreter: PythonInterpreter) -> some View {
+        switch interpreter.lifecycle {
+        case .endOfLife(let date):
+            badge("已終止支援 \(date)", tint: Theme.dangerRed)
+                .help("Python \(interpreter.minorVersion) 已不再收到安全修補。")
+        case .endingSoon(let date):
+            badge("支援至 \(date)", tint: Theme.warningAmber)
+        case .supported(let date):
+            badge("支援至 \(date)", tint: .secondary)
+        }
+    }
+    
+    private var endOfLifeBanner: some View {
+        let eol = viewModel.endOfLifePythons
+        let list = eol.map { "\($0.version)（\($0.source.rawValue)）" }.joined(separator: "、")
+        let needsInstall = viewModel.needsRecommendedPython
+        let viaBrew = viewModel.availableManagers.contains(.homebrew)
+        let uvReady = viewModel.availableManagers.contains(.uv)
+        return HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 15))
+                .foregroundColor(Theme.dangerRed)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("有 Python 版本已終止支援：\(list)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(needsInstall
+                     ? "終止支援的版本不再收到安全修補，套件也不再發布相容的新版本。建議升級到 Python \(PythonLifecycle.recommendedMinor)。"
+                     : "已安裝 Python \(PythonLifecycle.recommendedMinor)。請到「安全弱點稽核」，用卡片上的「搬到獨立環境」或「移除套件」清理舊環境裡的套件。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if needsInstall {
+                pillButton("一鍵升級到 \(PythonLifecycle.recommendedMinor)", icon: "arrow.up.circle", prominent: true) {
+                    if uvReady || viaBrew {
+                        Task { await viewModel.upgradeToRecommendedPython() }
+                    } else {
+                        uvConfirmIsForUpgrade = true
+                        showUVConfirm = true
+                    }
+                }
+                .disabled(viewModel.isActionRunning)
+            } else {
+                pillButton("前往安全稽核", icon: "shield.checkered") {
+                    viewModel.selectedTab = .security
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Theme.dangerRed.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Theme.dangerRed.opacity(0.35), lineWidth: 1)
+        )
+    }
+    
     // MARK: - uv
     
     private var uvBanner: some View {
@@ -182,6 +256,7 @@ struct PythonEnvironmentCard: View {
                 if viaBrew {
                     Task { await viewModel.installUV() }
                 } else {
+                    uvConfirmIsForUpgrade = false
                     showUVConfirm = true
                 }
             }

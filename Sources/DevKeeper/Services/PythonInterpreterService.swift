@@ -104,10 +104,10 @@ public final class PythonInterpreterService: Sendable {
     public func installableReleases(installed: [PythonInterpreter]) async -> [PythonRelease] {
         var releases: [PythonRelease] = []
         let uvStable = await uvLatestPatches()
-        // Offer only supported minors (3.10+), and nothing newer than the newest stable release uv knows about.
+        // Offer only minors that are still supported, and nothing newer than the newest stable release uv knows about.
         let newestStable = uvStable.keys.max { $0.compare($1, options: .numeric) == .orderedAscending }
         func isOffered(_ minor: String) -> Bool {
-            guard minor.compare("3.10", options: .numeric) != .orderedAscending else { return false }
+            guard !PythonLifecycle.isEndOfLife(minor: minor) else { return false }
             if let newestStable, minor.compare(newestStable, options: .numeric) == .orderedDescending { return false }
             return true
         }

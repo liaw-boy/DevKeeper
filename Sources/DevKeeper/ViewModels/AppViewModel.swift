@@ -531,14 +531,38 @@ public final class AppViewModel: ObservableObject {
     
     /// Newest Python 3.10+ interpreter, used for new uv tool environments.
     private func newestModernPython() -> PythonInterpreter? {
-        pythonInterpreters.first { $0.hasPip && $0.version.compare("3.10", options: .numeric) != .orderedAscending }
+        pythonInterpreters.first { $0.hasPip && !$0.isEndOfLife }
     }
     
     /// Python for new uv tool environments: the newest installed 3.10+ interpreter, or a version uv can download.
     private func migrationTargetPython() -> String? {
         if let path = newestModernPython()?.path { return path }
         guard availableManagers.contains(.uv) else { return nil }
-        return "3.13"
+        return PythonLifecycle.recommendedMinor
+    }
+    
+    /// Interpreters whose support has ended.
+    public var endOfLifePythons: [PythonInterpreter] { pythonInterpreters.filter { $0.isEndOfLife } }
+    
+    /// True when the recommended Python minor version is not installed yet.
+    public var needsRecommendedPython: Bool {
+        !pythonInterpreters.contains { $0.minorVersion == PythonLifecycle.recommendedMinor }
+    }
+    
+    /// Installs uv when needed, then the recommended Python. Returns false when it had to stop.
+    @discardableResult
+    public func upgradeToRecommendedPython(confirmedRemoteScript: Bool = false) async -> Bool {
+        guard !isActionRunning else { return false }
+        if !availableManagers.contains(.uv) {
+            await installUV(confirmedRemoteScript: confirmedRemoteScript)
+            guard availableManagers.contains(.uv) else {
+                appendLog("一鍵升級中止：uv 尚未安裝成功。")
+                return false
+            }
+        }
+        guard needsRecommendedPython else { return true }
+        await installPython(PythonRelease(source: .uv, version: PythonLifecycle.recommendedMinor))
+        return pythonInterpreters.contains { $0.minorVersion == PythonLifecycle.recommendedMinor }
     }
     
     /// Installs uv. Without Homebrew this runs the official installer script, which needs confirmation.
@@ -983,9 +1007,9 @@ public final class AppViewModel: ObservableObject {
     /// Picks a modern interpreter that pip may write to; the old system Python is used only as a last resort.
     private func automaticPython() -> PythonInterpreter? {
         let usable = pythonInterpreters.filter { $0.hasPip }
-        let modern = usable.filter { $0.version.compare("3.10", options: .numeric) != .orderedAscending }
+        let supported = usable.filter { !$0.isEndOfLife }
         // pythonInterpreters is sorted newest first.
-        return modern.first { !$0.isExternallyManaged } ?? modern.first ?? usable.first
+        return supported.first { !$0.isExternallyManaged } ?? supported.first ?? usable.first
     }
     
     /// True when the user has not chosen an interpreter and DevKeeper picked one automatically.
