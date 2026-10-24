@@ -26,6 +26,7 @@ struct Options {
     var yes = false
     var dryRun = false
     var showAll = false
+    var port: UInt16 = 8765
     var projects: String? = ProcessInfo.processInfo.environment["DEVKEEPER_PROJECTS"]
 }
 
@@ -44,6 +45,9 @@ func parseArguments() -> (Options, [String]) {
         case "--projects":
             index += 1
             if index < args.count { options.projects = args[index] }
+        case "--port":
+            index += 1
+            if index < args.count, let value = UInt16(args[index]) { options.port = value } else { printErr("--port 需要 0–65535 的數字"); exit(64) }
         case "-h", "--help": positional = ["help"]
         default: positional.append(a)
         }
@@ -65,6 +69,7 @@ func usage() {
       python list     列出所有偵測到的 Python 與支援狀態
       audit           稽核所有 Python 環境、uv tool 與 npm 的已知安全弱點（OSV）
       fix             修復弱點：先嘗試直接升級，修不了時規劃「搬到 uv 獨立環境」或「移除」
+      serve           啟動本機網頁介面（僅限 127.0.0.1，唯讀），網址含一次性金鑰
       version         顯示版本
 
     選項：
@@ -72,6 +77,7 @@ func usage() {
       --yes, -y       fix：直接執行替代修復（搬移或移除套件），不再詢問
       --dry-run       fix：只顯示會執行的指令，不實際執行
       --all           audit：連內建例外（系統 Python 附的 pip、setuptools、wheel）也顯示
+      --port 埠號      serve：監聽的連接埠（預設 8765，0 = 自動挑選）
       --projects 路徑  稽核該資料夾底下專案的 package.json 與 requirements.txt
                       （也可用環境變數 DEVKEEPER_PROJECTS）
 
@@ -81,36 +87,9 @@ func usage() {
 
 // MARK: - Shared setup
 
-func loadEnvironment() async -> (interpreters: [PythonInterpreter], managers: Set<PythonSource>) {
-    let interpreters = await PythonInterpreterService.shared.discover()
-    PythonRuntime.setCurrent(InterpreterChoice.automatic(from: interpreters))
-    let managers = await PythonInterpreterService.shared.availableManagers()
-    return (interpreters, managers)
-}
-
-func npmGlobals() async -> [(name: String, version: String)] {
-    guard let items = try? await NpmService.shared.fetchInstalledPackages() else { return [] }
-    return items.map { ($0.name, $0.currentVersion) }
-}
+func loadEnvironment() async -> DetectedEnvironment { await ReportBuilder.loadEnvironment() }
 
 // MARK: - Commands
-
-struct InterpreterReport: Codable {
-    let version: String
-    let source: String
-    let path: String
-    let supported: Bool
-    let managedByOS: Bool
-    let externallyManaged: Bool
-}
-
-func interpreterReports(_ interpreters: [PythonInterpreter]) -> [InterpreterReport] {
-    interpreters.map {
-        InterpreterReport(version: $0.version, source: $0.source.rawValue, path: $0.path,
-                          supported: !$0.isEndOfLife, managedByOS: $0.source == .system,
-                          externallyManaged: $0.isExternallyManaged)
-    }
-}
 
 func lifecycleText(_ i: PythonInterpreter) -> String {
     switch i.lifecycle {
@@ -122,7 +101,7 @@ func lifecycleText(_ i: PythonInterpreter) -> String {
 
 func commandPythonList() async -> Int32 {
     let env = await loadEnvironment()
-    if options.json { printJSON(interpreterReports(env.interpreters)); return 0 }
+    if options.json { printJSON(ReportBuilder.interpreterReports(env.interpreters)); return 0 }
     if env.interpreters.isEmpty { print("沒有偵測到可用的 Python。"); return 0 }
     for i in env.interpreters {
         let flags = [i.isExternallyManaged ? "受保護(PEP 668)" : nil, i.hasPip ? nil : "無 pip"].compactMap { $0 }
@@ -133,65 +112,21 @@ func commandPythonList() async -> Int32 {
     return 0
 }
 
-struct ScanReport: Codable {
-    let os: String
-    let interpreters: [InterpreterReport]
-    let npmGlobalCount: Int
-    let npmOutdated: [String: String]
-    let pipPythonVersion: String?
-    let pipCount: Int
-    let pipOutdated: [String: String]
-    let systemPackageManager: String?
-    let systemPackageCount: Int
-    let systemUpgradable: [String]
-}
-
 func commandScan() async -> Int32 {
     let env = await loadEnvironment()
-    let uname = (try? await ShellExecutor.shared.run(command: "uname -sr"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
-    
-    let npm = await npmGlobals()
-    var npmOutdated: [String: String] = [:]
-    if let out = try? await ShellExecutor.shared.run(command: "npm outdated -g --json 2>/dev/null; true"),
-       let start = out.firstIndex(of: "{"), let data = String(out[start...]).data(using: .utf8),
-       let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] {
-        for (name, info) in json { if let latest = info["latest"] as? String { npmOutdated[name] = latest } }
-    }
-    
-    let pipItems = (try? await PythonService.shared.fetchInstalledPackages()) ?? []
-    let pipOutdated = env.interpreters.isEmpty ? [:] : await PythonService.shared.fetchOutdatedMap()
-    
-    var manager: String?
-    var systemCount = 0
-    var upgradable: [String] = []
-    #if os(Linux)
-    if await AptService.shared.isAvailable() {
-        manager = "apt"
-        systemCount = await AptService.shared.installedCount()
-        upgradable = await AptService.shared.upgradable().map { "\($0.name) \($0.currentVersion) → \($0.newVersion)" }
-    }
-    #else
-    if let out = try? await ShellExecutor.shared.run(command: "command -v brew >/dev/null 2>&1 && brew outdated --quiet; true") {
-        manager = "Homebrew"
-        upgradable = out.split(separator: "\n").map(String.init)
-    }
-    #endif
-    
-    let report = ScanReport(
-        os: uname, interpreters: interpreterReports(env.interpreters),
-        npmGlobalCount: npm.count, npmOutdated: npmOutdated,
-        pipPythonVersion: PythonRuntime.current?.version, pipCount: pipItems.count, pipOutdated: pipOutdated,
-        systemPackageManager: manager, systemPackageCount: systemCount, systemUpgradable: upgradable
-    )
+    let report = await ReportBuilder.scan(env)
+    let npmOutdated = report.npmOutdated, pipOutdated = report.pipOutdated
+    let manager = report.systemPackageManager, systemCount = report.systemPackageCount, upgradable = report.systemUpgradable
+    let uname = report.os
     if options.json { printJSON(report); return 0 }
     
     print(bold("系統：") + uname)
     print(bold("\nPython：") + "\(env.interpreters.count) 個版本")
     for i in env.interpreters { print("  \(i.version)  \(i.source.rawValue)  \(lifecycleText(i))") }
-    print(bold("\nnpm 全域套件：") + "\(npm.count) 個，\(npmOutdated.count) 個可升級")
+    print(bold("\nnpm 全域套件：") + "\(report.npmGlobalCount) 個，\(npmOutdated.count) 個可升級")
     for (name, latest) in npmOutdated.sorted(by: { $0.key < $1.key }) { print("  \(name) → \(latest)") }
     if let v = PythonRuntime.current?.version {
-        print(bold("\npip 套件（Python \(v)）：") + "\(pipItems.count) 個，\(pipOutdated.count) 個可升級")
+        print(bold("\npip 套件（Python \(v)）：") + "\(report.pipCount) 個，\(pipOutdated.count) 個可升級")
         for (name, latest) in pipOutdated.sorted(by: { $0.key < $1.key }) { print("  \(name) → \(latest)") }
     }
     if let manager {
@@ -202,25 +137,8 @@ func commandScan() async -> Int32 {
     return 0
 }
 
-struct AuditItemReport: Codable {
-    let package: String
-    let ecosystem: String
-    let environments: [String]
-    let severity: String
-    let currentVersion: String
-    let safeVersion: String?
-    let cves: [String]
-    let fixCommands: [String]
-}
-
-func auditGroups(_ env: (interpreters: [PythonInterpreter], managers: Set<PythonSource>)) async -> (groups: [PackageVulnerabilityGroup], hidden: Int) {
-    let items = await AuditEngine.audit(
-        interpreters: env.interpreters,
-        npmPackages: await npmGlobals(),
-        projectsRoot: options.projects
-    )
-    let visible = options.showAll ? items : items.filter { !AuditEngine.isBuiltInException($0, interpreters: env.interpreters) }
-    return (PackageVulnerabilityGroup.grouped(from: visible), items.count - visible.count)
+func auditGroups(_ env: DetectedEnvironment) async -> (groups: [PackageVulnerabilityGroup], hidden: Int) {
+    await ReportBuilder.auditGroups(env, projectsRoot: options.projects, showAll: options.showAll)
 }
 
 func severityText(_ s: VulnerabilitySeverity) -> String {
@@ -237,11 +155,7 @@ func commandAudit() async -> Int32 {
     let env = await loadEnvironment()
     let result = await auditGroups(env)
     if options.json {
-        printJSON(result.groups.map {
-            AuditItemReport(package: $0.packageName, ecosystem: $0.ecosystem, environments: $0.fixTargets.map { $0.environment?.label ?? "global" },
-                            severity: $0.highestSeverity.rawValue, currentVersion: $0.currentVersion, safeVersion: $0.targetSafeVersion,
-                            cves: $0.cveList, fixCommands: $0.fixCommands)
-        })
+        printJSON(ReportBuilder.auditItems(result.groups))
         return result.groups.isEmpty ? 0 : 1
     }
     if result.groups.isEmpty {
@@ -354,6 +268,22 @@ func commandFix() async -> Int32 {
     return (planFailures + unresolved) > 0 ? 2 : 0
 }
 
+func commandServe() async -> Int32 {
+    let server: LocalHTTPServer
+    do { server = try LocalHTTPServer(port: options.port) } catch {
+        printErr(red("無法啟動：") + "\(error)")
+        return 1
+    }
+    let token = RequestGuard.makeToken()
+    let app = WebApp(token: token, port: server.port, projectsRoot: options.projects)
+    server.start { await app.handle($0) }
+    print(bold("DevKeeper 網頁介面已啟動") + dim("（僅限本機，唯讀）"))
+    print("  http://127.0.0.1:\(server.port)/?token=\(token)")
+    print(dim("\n用瀏覽器開啟上面的網址；按 Ctrl+C 結束。金鑰每次啟動都會重新產生。"))
+    fflush(stdout)
+    while true { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+}
+
 // MARK: - Dispatch
 
 let command = positional.first ?? "help"
@@ -366,6 +296,7 @@ case "python":
     if sub == "list" { exitCode = await commandPythonList() } else { usage(); exitCode = 64 }
 case "audit": exitCode = await commandAudit()
 case "fix": exitCode = await commandFix()
+case "serve": exitCode = await commandServe()
 case "help": usage()
 default:
     printErr("未知的指令：\(command)\n")

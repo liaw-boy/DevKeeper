@@ -44,12 +44,23 @@ final class PythonLogicTests: XCTestCase {
     }
     
     func testAppleAndDistroBundledLocations() {
-        XCTAssertTrue(PythonEnvironmentService.isAppleBundledLocation("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/x"))
-        XCTAssertTrue(PythonEnvironmentService.isAppleBundledLocation("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/x"))
-        XCTAssertTrue(PythonEnvironmentService.isAppleBundledLocation("/usr/lib/python3/dist-packages"))
-        XCTAssertFalse(PythonEnvironmentService.isAppleBundledLocation("/Users/me/Library/Python/3.9/lib/python/site-packages"))
-        XCTAssertFalse(PythonEnvironmentService.isAppleBundledLocation("/usr/local/lib/python3.11/dist-packages"))
-        XCTAssertFalse(PythonEnvironmentService.isAppleBundledLocation(nil))
+        XCTAssertTrue(PythonEnvironmentService.isOSManagedLocation("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/x"))
+        XCTAssertTrue(PythonEnvironmentService.isOSManagedLocation("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/x"))
+        XCTAssertTrue(PythonEnvironmentService.isOSManagedLocation("/usr/lib/python3/dist-packages"))
+        XCTAssertFalse(PythonEnvironmentService.isOSManagedLocation("/Users/me/Library/Python/3.9/lib/python/site-packages"))
+        XCTAssertFalse(PythonEnvironmentService.isOSManagedLocation("/usr/local/lib/python3.11/dist-packages"))
+        XCTAssertFalse(PythonEnvironmentService.isOSManagedLocation(nil))
+    }
+    
+    func testSourceIsJudgedByLocation() {
+        let classify = PythonInterpreterService.classifySource
+        XCTAssertEqual(classify("/usr/bin/python3.14", .uv), .system, "uv also lists the distribution's Pythons")
+        XCTAssertEqual(classify("/usr/bin/python3", .system), .system)
+        XCTAssertEqual(classify("/home/me/.local/share/uv/python/cpython-3.13-linux/bin/python3.13", .system), .uv)
+        XCTAssertEqual(classify("/home/me/.pyenv/versions/3.12.1/bin/python", .system), .pyenv)
+        XCTAssertEqual(classify("/opt/homebrew/Cellar/python@3.12/3.12.4/bin/python3.12", .system), .homebrew)
+        XCTAssertEqual(classify("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9", .uv), .system)
+        XCTAssertEqual(classify("/somewhere/else/python", .pyenv), .pyenv, "unknown locations keep the reported source")
     }
     
     // MARK: dependency graph

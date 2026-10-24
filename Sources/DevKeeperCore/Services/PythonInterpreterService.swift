@@ -12,6 +12,24 @@ public final class PythonInterpreterService: Sendable {
     
     // MARK: - Discovery
     
+    /// Which manager an interpreter belongs to, judged by where it lives rather than by which tool reported it
+    /// (uv, for example, also lists the distribution's own Pythons).
+    public static func classifySource(path: String, fallback: PythonSource) -> PythonSource {
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        for p in [real, path] {
+            if p.contains("/uv/python/") { return .uv }
+            if p.contains("/.pyenv/") { return .pyenv }
+            if p.hasPrefix("/opt/homebrew/") || p.hasPrefix("/home/linuxbrew/") || p.contains("/Cellar/") { return .homebrew }
+            if p.hasPrefix("/usr/bin/") || p.hasPrefix("/usr/lib/") || p.hasPrefix("/bin/") || p.contains("/Developer/") { return .system }
+        }
+        #if os(Linux)
+        if path.hasPrefix("/usr/local/") { return .system }
+        #else
+        if path.hasPrefix("/usr/local/") { return .homebrew }
+        #endif
+        return fallback
+    }
+    
     /// Finds interpreters from the system, Homebrew, pyenv and uv, de-duplicated by real path.
     public func discover() async -> [PythonInterpreter] {
         let fm = FileManager.default
@@ -25,9 +43,13 @@ public final class PythonInterpreterService: Sendable {
             candidates.append(("/usr/bin/python3", .system))
         }
         #else
-        // The distribution's own Python (managed by the package manager).
+        // The distribution's own Python (managed by the package manager), plus any extra versions beside it.
         if fm.isExecutableFile(atPath: "/usr/bin/python3") {
             candidates.append(("/usr/bin/python3", .system))
+        }
+        for name in ((try? fm.contentsOfDirectory(atPath: "/usr/bin")) ?? []).sorted()
+        where InputValidator.fullyMatches(name, pattern: #"python3\.\d+"#) {
+            candidates.append(("/usr/bin/\(name)", .system))
         }
         #endif
         for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
@@ -50,7 +72,8 @@ public final class PythonInterpreterService: Sendable {
         for candidate in candidates {
             let real = URL(fileURLWithPath: candidate.path).resolvingSymlinksInPath().path
             guard !seen.contains(real) else { continue }
-            if let info = await inspect(path: candidate.path, source: candidate.source) {
+            let source = Self.classifySource(path: candidate.path, fallback: candidate.source)
+            if let info = await inspect(path: candidate.path, source: source) {
                 seen.insert(real)
                 result.append(info)
             }

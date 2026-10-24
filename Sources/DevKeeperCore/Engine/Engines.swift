@@ -56,11 +56,10 @@ public enum AuditEngine {
                 kind: .interpreter, pythonPath: interpreter.path,
                 label: "Python \(interpreter.version) (\(interpreter.source.rawValue))"
             )
-            // The OS-provided Python ships some packages that only the OS vendor can update; skip those.
-            // Packages the user installed into that Python are still audited.
-            let packages = interpreter.source == .system
-                ? await PythonEnvironmentService.shared.installedPackagesExcludingAppleBundle(pythonPath: interpreter.path)
-                : await PythonEnvironmentService.shared.installedPackages(pythonPath: interpreter.path)
+            // Packages owned by the OS (Xcode, apt) can only be updated by the OS vendor; skip them for every
+            // interpreter, because e.g. Debian's dist-packages are visible to every system python3.x.
+            // Packages the user installed are still audited.
+            let packages = await PythonEnvironmentService.shared.installedPackagesExcludingOSManaged(pythonPath: interpreter.path)
             record(await auditList(packages, ecosystem: "PyPI", environment: env))
         }
         for env in await PythonEnvironmentService.shared.uvToolEnvironments() {

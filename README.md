@@ -59,3 +59,22 @@ open DevKeeper.app
 ```bash
 open DevKeeper.dmg
 ```
+
+---
+
+## 命令列版與 Linux 網頁介面
+
+macOS 圖形應用程式只能在 macOS 執行。Linux 與其他環境可使用 `devkeeper-cli`（Swift 5.10 以上）：
+
+```bash
+swift build -c release --product devkeeper-cli
+.build/release/devkeeper-cli scan          # 待升級套件總覽（加 --json 輸出 JSON）
+.build/release/devkeeper-cli audit         # 安全弱點稽核，發現弱點時結束代碼為 1
+.build/release/devkeeper-cli serve         # 啟動本機網頁介面
+```
+
+`serve` 會印出一組含一次性金鑰的網址（例如 `http://127.0.0.1:8765/?token=…`），用瀏覽器開啟即可查看概覽、Python 環境與安全稽核。
+
+* 僅監聽 `127.0.0.1`，唯讀，不會修改系統；需要修復請用 `devkeeper-cli fix`。
+* 金鑰每次啟動重新產生，沒有金鑰或 Host 不是本機的請求一律拒絕。
+* 頁面會顯示本機的套件版本、CVE 與路徑，請不要把連接埠轉發到不信任的網路。
