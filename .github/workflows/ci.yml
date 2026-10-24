@@ -46,6 +46,16 @@ jobs:
           .build/release/devkeeper-cli scan --json > scan.json
           .build/release/devkeeper-cli audit --json > audit.json || test $? -eq 1
           head -c 400 scan.json
+      # The Swift image has no Python; install the distribution's own to exercise interpreter discovery,
+      # PEP 668 detection and the distro-bundled package exclusion.
+      - name: Python discovery smoke test
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-pip python3-venv > /dev/null
+          .build/release/devkeeper-cli python list
+          .build/release/devkeeper-cli python list --json
+          .build/release/devkeeper-cli scan
+          .build/release/devkeeper-cli audit --all || test $? -eq 1
 
   linux-release-binary:
     name: Linux release binary
