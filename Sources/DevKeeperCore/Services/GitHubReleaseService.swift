@@ -68,7 +68,7 @@ public final class GitHubReleaseService: @unchecked Sendable {
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
         
         do {
-            let (data, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.devkeeperData(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 return nil
             }

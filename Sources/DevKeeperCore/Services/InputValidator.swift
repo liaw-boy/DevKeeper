@@ -2,15 +2,21 @@ import Foundation
 
 /// Allowlist validation for values that end up inside shell command strings.
 public enum InputValidator {
-    private static let namePattern = #"^[A-Za-z0-9@][A-Za-z0-9@/._+-]{0,213}$"#
-    private static let versionPattern = #"^[A-Za-z0-9][A-Za-z0-9._+!-]{0,63}$"#
+    private static let namePattern = #"[A-Za-z0-9@][A-Za-z0-9@/._+-]{0,213}"#
+    private static let versionPattern = #"[A-Za-z0-9][A-Za-z0-9._+!-]{0,63}"#
+    
+    /// True only when the whole string matches. `^...$` is not safe for validation: on some platforms `$` also
+    /// matches before a trailing newline, which would let "name\n" through into a shell command.
+    public static func fullyMatches(_ value: String, pattern: String) -> Bool {
+        value.range(of: "\\A(?:" + pattern + ")\\z", options: .regularExpression) != nil
+    }
     
     public static func isValidPackageName(_ value: String) -> Bool {
-        value.range(of: namePattern, options: .regularExpression) != nil
+        fullyMatches(value, pattern: namePattern)
     }
     
     public static func isValidVersion(_ value: String) -> Bool {
-        value.range(of: versionPattern, options: .regularExpression) != nil
+        fullyMatches(value, pattern: versionPattern)
     }
     
     /// Returns the name unchanged when it is safe to embed in a shell command, otherwise nil.
@@ -21,7 +27,7 @@ public enum InputValidator {
     /// GitHub owner or repository name; "." and ".." are rejected so they cannot alter an API path.
     public static func isValidRepoComponent(_ value: String) -> Bool {
         guard value != ".", value != ".." else { return false }
-        return value.range(of: #"^[A-Za-z0-9_.-]{1,100}$"#, options: .regularExpression) != nil
+        return fullyMatches(value, pattern: #"[A-Za-z0-9_.-]{1,100}"#)
     }
     
     /// Parses an https URL, optionally restricted to specific hosts (exact match or subdomain).

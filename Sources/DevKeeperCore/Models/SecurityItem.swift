@@ -105,7 +105,7 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     
     public static func osvUrl(for identifier: String) -> URL? {
         let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil else { return nil }
+        guard InputValidator.fullyMatches(trimmed, pattern: #"[A-Za-z0-9._:-]{1,128}"#) else { return nil }
         return URL(string: "https://osv.dev/vulnerability/\(trimmed)")
     }
 }

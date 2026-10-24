@@ -45,3 +45,17 @@ final class InputValidatorTests: XCTestCase {
         XCTAssertEqual(InputValidator.shellQuoted("plain"), "'plain'")
     }
 }
+
+final class TrailingNewlineTests: XCTestCase {
+    /// `$` can match before a trailing newline on some platforms; validators must reject it everywhere.
+    func testValidatorsRejectTrailingAndEmbeddedNewlines() {
+        for value in ["foo\n", "foo\r\n", "foo\nbar", "\nfoo", "3.13\n"] {
+            XCTAssertFalse(InputValidator.isValidPackageName(value), value.debugDescription)
+            XCTAssertFalse(InputValidator.isValidVersion(value), value.debugDescription)
+            XCTAssertFalse(InputValidator.isValidRepoComponent(value), value.debugDescription)
+        }
+        XCTAssertNil(VulnerabilityItem.osvUrl(for: "GHSA-12\n34"))  // embedded newline; surrounding whitespace is trimmed on purpose
+        XCTAssertFalse(InputValidator.fullyMatches("3.13\n", pattern: #"3\.\d+"#))
+        XCTAssertTrue(InputValidator.fullyMatches("3.13", pattern: #"3\.\d+"#))
+    }
+}

@@ -155,7 +155,7 @@ public final class AIToolService: @unchecked Sendable {
         case "claude":
             // npm registry @anthropic-ai/claude-code
             guard let url = URL(string: "https://registry.npmjs.org/@anthropic-ai/claude-code/latest") else { return nil }
-            guard let (data, res) = try? await urlSession.data(from: url),
+            guard let (data, res) = try? await urlSession.devkeeperData(from: url),
                   let http = res as? HTTPURLResponse, http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let version = json["version"] as? String else { return nil }
@@ -164,7 +164,7 @@ public final class AIToolService: @unchecked Sendable {
         case "codex":
             // PyPI openai package
             guard let url = URL(string: "https://pypi.org/pypi/openai/json") else { return nil }
-            guard let (data, res) = try? await urlSession.data(from: url),
+            guard let (data, res) = try? await urlSession.devkeeperData(from: url),
                   let http = res as? HTTPURLResponse, http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let info = json["info"] as? [String: Any],
@@ -174,7 +174,7 @@ public final class AIToolService: @unchecked Sendable {
         case "aider":
             // PyPI
             guard let url = URL(string: "https://pypi.org/pypi/aider-chat/json") else { return nil }
-            guard let (data, res) = try? await urlSession.data(from: url),
+            guard let (data, res) = try? await urlSession.devkeeperData(from: url),
                   let http = res as? HTTPURLResponse, http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let info = json["info"] as? [String: Any],
@@ -186,7 +186,7 @@ public final class AIToolService: @unchecked Sendable {
             guard let url = URL(string: "https://api.github.com/repos/ollama/ollama/releases/latest") else { return nil }
             var req = URLRequest(url: url)
             req.setValue("DevKeeper-MacApp", forHTTPHeaderField: "User-Agent")
-            guard let (data, res) = try? await urlSession.data(for: req),
+            guard let (data, res) = try? await urlSession.devkeeperData(for: req),
                   let http = res as? HTTPURLResponse, http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tag = json["tag_name"] as? String else { return nil }
@@ -195,7 +195,7 @@ public final class AIToolService: @unchecked Sendable {
         case "llm":
             // PyPI
             guard let url = URL(string: "https://pypi.org/pypi/llm/json") else { return nil }
-            guard let (data, res) = try? await urlSession.data(from: url),
+            guard let (data, res) = try? await urlSession.devkeeperData(from: url),
                   let http = res as? HTTPURLResponse, http.statusCode == 200,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let info = json["info"] as? [String: Any],

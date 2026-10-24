@@ -32,7 +32,7 @@ public final class PythonInterpreterService: Sendable {
         #endif
         for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
             let names = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
-            for name in names.sorted() where name.range(of: #"^python3(\.\d+)?$"#, options: .regularExpression) != nil {
+            for name in names.sorted() where InputValidator.fullyMatches(name, pattern: #"python3(\.\d+)?"#) {
                 candidates.append(("\(dir)/\(name)", .homebrew))
             }
         }

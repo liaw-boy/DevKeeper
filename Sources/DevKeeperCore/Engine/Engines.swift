@@ -232,7 +232,7 @@ public enum RemediationEngine {
         
         if plan.kind == .migrate {
             guard let target = plan.targetPython,
-                  target.hasPrefix("/") || target.range(of: #"^3\.\d+$"#, options: .regularExpression) != nil else {
+                  target.hasPrefix("/") || InputValidator.fullyMatches(target, pattern: #"3\.\d+"#) else {
                 return .failure("沒有可用的新版 Python。")
             }
             let q = InputValidator.shellQuoted(target)
