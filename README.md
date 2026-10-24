@@ -47,6 +47,20 @@ DevKeeper 是一款專為 macOS 量身打造的原生開發者套件與版本管
 
 ---
 
+## 用 Homebrew 安裝
+
+這個 repo 本身就是 Homebrew tap：
+
+```bash
+brew tap liaw-boy/devkeeper https://github.com/liaw-boy/DevKeeper
+brew install --cask devkeeper    # macOS 應用程式
+brew install devkeeper-cli       # 命令列版（目前僅提供 Linux x86_64 預編譯檔）
+```
+
+應用程式為 ad-hoc 簽署、未經 Apple 公證，第一次開啟會被 macOS 擋下：先開啟一次，再到「系統設定 > 隱私權與安全性」按「仍要打開」。
+
+---
+
 ## 快速啟動方式
 
 可以直接透過以下指令於 Mac 螢幕上啟動獨立應用程式：
