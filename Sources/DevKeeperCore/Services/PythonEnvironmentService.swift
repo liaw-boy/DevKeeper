@@ -115,7 +115,10 @@ public final class PythonEnvironmentService: Sendable {
     /// developer tools, only Apple can update them, and users cannot change them.
     public static func isAppleBundledLocation(_ location: String?) -> Bool {
         guard let location else { return false }
-        return location.contains("/Xcode.app/") || location.contains("/CommandLineTools/")
+        // macOS: copies shipped inside Xcode / Command Line Tools.
+        if location.contains("/Xcode.app/") || location.contains("/CommandLineTools/") { return true }
+        // Debian/Ubuntu: packages installed by apt live in /usr/lib/python3/dist-packages.
+        return location.hasPrefix("/usr/lib/python3/") || location.hasPrefix("/usr/lib/python3.")
     }
     
     /// Same as `installedPackages`, but leaves out packages bundled inside Xcode / Command Line Tools.

@@ -1,3 +1,4 @@
+import DevKeeperCore
 import Foundation
 import SwiftUI
 
@@ -143,36 +144,7 @@ public final class AppViewModel: ObservableObject {
     }
     
     public var groupedVulnerabilities: [PackageVulnerabilityGroup] {
-        var groups: [String: [VulnerabilityItem]] = [:]
-        for v in vulnerabilities {
-            let key = "\(v.ecosystem.lowercased()):\(v.packageName.lowercased()):\(v.projectPath ?? "")"
-            groups[key, default: []].append(v)
-        }
-        
-        func severityScore(_ s: VulnerabilitySeverity) -> Int {
-            switch s {
-            case .critical: return 4
-            case .high: return 3
-            case .medium: return 2
-            case .low: return 1
-            case .unknown: return 0
-            }
-        }
-        
-        return groups.values.map { items in
-            let first = items[0]
-            return PackageVulnerabilityGroup(
-                packageName: first.packageName,
-                ecosystem: first.ecosystem,
-                currentVersion: first.currentVersion,
-                vulnerabilities: items
-            )
-        }.sorted { a, b in
-            if a.highestSeverity != b.highestSeverity {
-                return severityScore(a.highestSeverity) > severityScore(b.highestSeverity)
-            }
-            return a.packageName < b.packageName
-        }
+        PackageVulnerabilityGroup.grouped(from: vulnerabilities)
     }
     
     public var totalOutdatedCount: Int {
@@ -296,52 +268,11 @@ public final class AppViewModel: ObservableObject {
         self.isAuditingSecurity = true
         appendLog("正在啟動全面安全弱點稽核 (Google OSV CVE/GHSA 比對)...")
         
-        var detectedVulns: [VulnerabilityItem] = []
-        var seenIds = Set<String>()
-        
-        func record(_ vulns: [VulnerabilityItem]) {
-            for v in vulns {
-                let scope = v.environment?.pythonPath ?? v.projectPath ?? ""
-                let key = "\(v.id)|\(v.packageName.lowercased())|\(scope)"
-                if seenIds.insert(key).inserted { detectedVulns.append(v) }
-            }
-        }
-        
-        // 1. Audit system npm global packages
-        record(await auditList(npmPackages.map { ($0.name, $0.currentVersion) }, ecosystem: "npm", environment: nil))
-        
-        // 2. Audit every Python environment: all interpreters (including the old system Python) and uv tool venvs
-        for interpreter in pythonInterpreters where interpreter.hasPip {
-            let env = PythonEnvironmentRef(
-                kind: .interpreter, pythonPath: interpreter.path,
-                label: "Python \(interpreter.version) (\(interpreter.source.rawValue))"
-            )
-            // The Apple-provided Python ships some packages inside Xcode; only Apple can update those, so they are
-            // not audited. Packages the user installed into that Python are still audited.
-            let packages = interpreter.source == .system
-                ? await PythonEnvironmentService.shared.installedPackagesExcludingAppleBundle(pythonPath: interpreter.path)
-                : await PythonEnvironmentService.shared.installedPackages(pythonPath: interpreter.path)
-            record(await auditList(packages, ecosystem: "PyPI", environment: env))
-        }
-        for env in await PythonEnvironmentService.shared.uvToolEnvironments() {
-            let packages = await PythonEnvironmentService.shared.uvToolPackages(pythonPath: env.pythonPath)
-            record(await auditList(packages, ecosystem: "PyPI", environment: env))
-        }
-        
-        // 3. Audit local projects under the user-chosen projects folder (Settings), if any
-        let projectsRoot = UserDefaults.standard.string(forKey: "projectsRootPath") ?? ""
-        let userProjectsPath = URL(fileURLWithPath: projectsRoot)
-        if !projectsRoot.isEmpty, FileManager.default.fileExists(atPath: userProjectsPath.path) {
-            if let subfolders = try? FileManager.default.contentsOfDirectory(at: userProjectsPath, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
-                for sub in subfolders {
-                    let hasPkgJson = FileManager.default.fileExists(atPath: sub.appendingPathComponent("package.json").path)
-                    let hasReqs = FileManager.default.fileExists(atPath: sub.appendingPathComponent("requirements.txt").path)
-                    if hasPkgJson || hasReqs {
-                        record(await SecurityService.shared.auditProjectDirectory(at: sub))
-                    }
-                }
-            }
-        }
+        var detectedVulns = await AuditEngine.audit(
+            interpreters: pythonInterpreters,
+            npmPackages: npmPackages.map { ($0.name, $0.currentVersion) },
+            projectsRoot: UserDefaults.standard.string(forKey: "projectsRootPath")
+        )
         
         let ignored = ignoredKeys
         let visible = detectedVulns.filter { !ignored.contains(Self.ignoreKey($0)) && !isBuiltInException($0) }
@@ -362,42 +293,7 @@ public final class AppViewModel: ObservableObject {
         }
     }
     
-    /// Audits packages against OSV with a small amount of concurrency.
-    private func auditList(_ packages: [(name: String, version: String)], ecosystem: String, environment: PythonEnvironmentRef?) async -> [VulnerabilityItem] {
-        var results: [VulnerabilityItem] = []
-        let batchSize = 8
-        var index = 0
-        while index < packages.count {
-            let batch = Array(packages[index..<min(index + batchSize, packages.count)])
-            index += batchSize
-            let found = await withTaskGroup(of: [VulnerabilityItem].self) { group in
-                for pkg in batch {
-                    group.addTask {
-                        await SecurityService.shared.auditPackage(name: pkg.name, version: pkg.version, ecosystem: ecosystem)
-                    }
-                }
-                var all: [VulnerabilityItem] = []
-                for await items in group { all.append(contentsOf: items) }
-                return all
-            }
-            results.append(contentsOf: environment.map { env in found.map { $0.inEnvironment(env) } } ?? found)
-        }
-        return results
-    }
-    
     // MARK: - Alternative fixes (remove / move to an isolated environment)
-    
-    /// Newest Python 3.10+ interpreter, used for new uv tool environments.
-    private func newestModernPython() -> PythonInterpreter? {
-        pythonInterpreters.first { $0.hasPip && !$0.isEndOfLife }
-    }
-    
-    /// Python for new uv tool environments: the newest installed 3.10+ interpreter, or a version uv can download.
-    private func migrationTargetPython() -> String? {
-        if let path = newestModernPython()?.path { return path }
-        guard availableManagers.contains(.uv) else { return nil }
-        return PythonLifecycle.recommendedMinor
-    }
     
     /// Works out whether a vulnerable package can be removed, or its tool moved to an isolated environment.
     public func prepareRemediation(for group: PackageVulnerabilityGroup, environment env: PythonEnvironmentRef?) async {
@@ -408,7 +304,8 @@ public final class AppViewModel: ObservableObject {
               let interpreter = pythonInterpreters.first(where: { $0.path == env.pythonPath }) else { return }
         switch await PythonEnvironmentService.shared.plan(
             packageName: group.packageName, interpreter: interpreter,
-            targetPython: migrationTargetPython(), uvAvailable: availableManagers.contains(.uv)
+            targetPython: InterpreterChoice.migrationTarget(from: pythonInterpreters, uvAvailable: availableManagers.contains(.uv)),
+            uvAvailable: availableManagers.contains(.uv)
         ) {
         case .plan(let plan): remediationPlans[key] = plan
         case .unavailable(let reason): remediationNotes[key] = reason
@@ -420,16 +317,6 @@ public final class AppViewModel: ObservableObject {
     @discardableResult
     public func executeRemediation(_ plan: RemediationPlan, groupId: String, key: String, rescan: Bool = true) async -> Bool {
         guard !isActionRunning else { return false }
-        guard pythonInterpreters.contains(where: { $0.path == plan.interpreterPath }) else {
-            remediationNotes[key] = "找不到對應的 Python 環境，請重新掃描。"
-            return false
-        }
-        let allNames = plan.toolsToInstall + plan.toolsAlreadyInUV + plan.packagesToRemove
-        guard allNames.allSatisfy({ InputValidator.isValidPackageName($0) }) else {
-            remediationNotes[key] = "套件名稱含不允許的字元，已拒絕。"
-            return false
-        }
-        
         isActionRunning = true
         fixingVulnId = groupId
         pythonActionLabel = plan.kind == .migrate ? "搬到獨立環境" : "移除套件"
@@ -442,44 +329,18 @@ public final class AppViewModel: ObservableObject {
             actionStage = ""
         }
         
-        if plan.kind == .migrate {
-            guard let target = plan.targetPython,
-                  target.hasPrefix("/") || target.range(of: #"^3\.\d+$"#, options: .regularExpression) != nil else {
-                remediationNotes[key] = "沒有可用的新版 Python。"
-                return false
-            }
-            let q = InputValidator.shellQuoted(target)
-            for (i, tool) in plan.toolsToInstall.enumerated() {
-                actionStage = "安裝 \(tool) 到獨立環境 (\(i + 1)/\(plan.toolsToInstall.count))..."
-                appendLog("uv tool install \(tool)（Python：\(target)）")
-                for await chunk in ShellExecutor.shared.stream(command: "uv tool install --python \(q) \(tool)") {
-                    liveLogOutput += chunk
-                }
-                let installed = await PythonEnvironmentService.shared.uvToolEnvironments()
-                let ok = ShellExecutor.shared.lastStreamStatus == 0
-                    && installed.contains { PythonDependencyGraph.normalize($0.toolName ?? "") == PythonDependencyGraph.normalize(tool) }
-                guard ok else {
-                    appendLog("\(tool) 無法安裝到獨立環境，已中止，舊環境沒有任何變動。")
-                    remediationNotes[key] = "\(tool) 無法安裝到獨立環境（可能與新版 Python 不相容），已中止，舊環境沒有任何變動。詳見執行日誌。"
-                    return false
-                }
-            }
-        }
-        
-        actionStage = "移除舊環境中的 \(plan.packagesToRemove.count) 個套件..."
-        let py = InputValidator.shellQuoted(plan.interpreterPath)
-        let names = plan.packagesToRemove.joined(separator: " ")
-        appendLog("從 \(plan.interpreterLabel) 移除：\(names)")
-        for await chunk in ShellExecutor.shared.stream(command: "\(py) -m pip uninstall -y \(names)") {
-            liveLogOutput += chunk
-        }
-        guard ShellExecutor.shared.lastStreamStatus == 0 else {
-            appendLog("移除舊套件失敗，請查看執行日誌。")
-            remediationNotes[key] = "新環境已就緒，但從舊環境移除套件失敗。詳見執行日誌。"
+        let result = await RemediationEngine.execute(
+            plan,
+            interpreters: pythonInterpreters,
+            stage: { text in await MainActor.run { self.actionStage = text } },
+            output: { text in await MainActor.run { self.liveLogOutput += text } },
+            notice: { text in await MainActor.run { self.appendLog(text) } }
+        )
+        if case .failure(let reason) = result {
+            remediationNotes[key] = reason
             return false
         }
         
-        appendLog("\(plan.packageName) 的修復完成（\(plan.kind == .migrate ? "已搬到獨立環境" : "已移除")）。")
         remediationPlans[key] = nil
         remediationNotes[key] = nil
         fixFailures[key] = nil
@@ -558,11 +419,8 @@ public final class AppViewModel: ObservableObject {
     /// Xcode / Command Line Tools). Users cannot upgrade that Python, and the fixed versions need a newer one,
     /// so these are hidden by default instead of showing an unfixable warning on every Mac with Xcode.
     private func isBuiltInException(_ v: VulnerabilityItem) -> Bool {
-        guard !UserDefaults.standard.bool(forKey: Self.showBuiltInExceptionsDefaults),
-              let env = v.environment, env.kind == .interpreter,
-              let interpreter = pythonInterpreters.first(where: { $0.path == env.pythonPath }),
-              interpreter.source == .system else { return false }
-        return PythonDependencyGraph.baseTooling.contains(PythonDependencyGraph.normalize(v.packageName))
+        guard !UserDefaults.standard.bool(forKey: Self.showBuiltInExceptionsDefaults) else { return false }
+        return AuditEngine.isBuiltInException(v, interpreters: pythonInterpreters)
     }
     
     /// Hides a package's vulnerabilities in one environment (a known risk that cannot be fixed there).
@@ -609,86 +467,18 @@ public final class AppViewModel: ObservableObject {
         self.isAuditingSecurity = false
     }
     
-    private enum FixOutcome {
-        case fixed
-        case failed(String)
-    }
-    
-    /// Runs a fix command, then checks the installed version instead of trusting the exit status.
+    /// Runs a fix command and verifies the result by the installed version.
     private func executeFix(command: String, packageName: String, ecosystem: String, targetVersion: String?, environment: PythonEnvironmentRef? = nil) async -> FixOutcome {
-        let eco = ecosystem.lowercased()
-        let interpreter = environment.flatMap { env in pythonInterpreters.first { $0.path == env.pythonPath } }
-        if environment?.kind != .uvTool, eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
-            let target = interpreter ?? PythonRuntime.current
-            if let target, target.isExternallyManaged {
-                return .failed("Python \(target.version)（\(target.source.rawValue)）受 PEP 668 保護，不允許用 pip 直接修改。")
-            }
-        }
-        var output = ""
-        for await chunk in ShellExecutor.shared.stream(command: command) {
-            self.liveLogOutput += chunk
-            output += chunk
-        }
-        var lastStatus = ShellExecutor.shared.lastStreamStatus
-        
-        // The fixed version may not support this Python; try the newest compatible release as best effort.
-        let isPip = ecosystem.lowercased().contains("pypi") || ecosystem.lowercased().contains("pip")
-        if lastStatus != 0, isPip, command.contains(">="),
-           output.contains("No matching distribution") || output.contains("Could not find a version"),
-           let safeName = InputValidator.safeName(packageName) {
-            let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
-            let fallback = "\(python) -m pip install --upgrade \(safeName)"
-            appendLog("指定的安全版本無法安裝，改裝目前 Python 可用的最新版本：\(fallback)")
-            for await chunk in ShellExecutor.shared.stream(command: fallback) {
-                self.liveLogOutput += chunk
-                output += chunk
-            }
-            lastStatus = ShellExecutor.shared.lastStreamStatus
-        }
-        
-        let installed = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
-        
-        if let target = targetVersion, !target.isEmpty {
-            if let installed {
-                if installed.compare(target, options: .numeric) != .orderedAscending {
-                    return .fixed
-                }
-                if output.contains("Requires-Python") || output.contains("No matching distribution") {
-                    let py = interpreter.map { "Python \($0.version)" } ?? (systemInfo.pythonVersion.isEmpty ? "Python" : systemInfo.pythonVersion)
-                    return .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(installed) 已是此環境能安裝的最新版。請改用較新的 Python 或自行升級。")
-                }
-                return .failed("升級後版本為 \(installed)，仍低於安全版本 \(target)。")
-            }
-        }
-        return lastStatus == 0 ? .fixed : .failed("修復指令執行失敗，請查看執行日誌。")
-    }
-    
-    private func installedVersion(packageName: String, ecosystem: String, environment: PythonEnvironmentRef? = nil) async -> String? {
-        guard let name = InputValidator.safeName(packageName) else { return nil }
-        let eco = ecosystem.lowercased()
-        if let environment, environment.kind == .uvTool {
-            let packages = await PythonEnvironmentService.shared.uvToolPackages(pythonPath: environment.pythonPath)
-            return packages.first { PythonDependencyGraph.normalize($0.name) == PythonDependencyGraph.normalize(name) }?.version
-        }
-        if eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
-            let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
-            guard let out = try? await ShellExecutor.shared.run(command: "\(python) -m pip show \(name)") else { return nil }
-            return out.components(separatedBy: .newlines)
-                .first { $0.hasPrefix("Version:") }
-                .map { $0.dropFirst("Version:".count).trimmingCharacters(in: .whitespaces) }
-        } else if eco.contains("npm") {
-            guard let out = try? await ShellExecutor.shared.run(command: "npm ls -g \(name) --depth=0 --json"),
-                  let start = out.firstIndex(of: "{"),
-                  let data = String(out[start...]).data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let deps = json["dependencies"] as? [String: Any],
-                  let entry = deps[name] as? [String: Any] else { return nil }
-            return entry["version"] as? String
-        } else if eco.contains("brew") {
-            guard let out = try? await ShellExecutor.shared.run(command: "brew list --versions \(name)") else { return nil }
-            return out.split(separator: " ").last.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return nil
+        await FixEngine.execute(
+            command: command,
+            packageName: packageName,
+            ecosystem: ecosystem,
+            targetVersion: targetVersion,
+            environment: environment,
+            interpreters: pythonInterpreters,
+            output: { text in await MainActor.run { self.liveLogOutput += text } },
+            notice: { text in await MainActor.run { self.appendLog(text) } }
+        )
     }
     
     /// Fixes one package in every environment it is installed in.
@@ -934,10 +724,7 @@ public final class AppViewModel: ObservableObject {
     
     /// Picks a modern interpreter that pip may write to; the old system Python is used only as a last resort.
     private func automaticPython() -> PythonInterpreter? {
-        let usable = pythonInterpreters.filter { $0.hasPip }
-        let supported = usable.filter { !$0.isEndOfLife }
-        // pythonInterpreters is sorted newest first.
-        return supported.first { !$0.isExternallyManaged } ?? supported.first ?? usable.first
+        InterpreterChoice.automatic(from: pythonInterpreters)
     }
     
     public var selectedPythonPath: String? { PythonRuntime.current?.path }

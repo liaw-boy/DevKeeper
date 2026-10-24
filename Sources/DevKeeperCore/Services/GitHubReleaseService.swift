@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public struct GitHubReleaseInfo: Codable, Sendable {
     public let tagName: String

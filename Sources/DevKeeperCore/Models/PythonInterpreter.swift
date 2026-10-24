@@ -1,7 +1,11 @@
 import Foundation
 
 public enum PythonSource: String, Sendable, Codable {
+    #if os(macOS)
     case system = "Apple 內建"
+    #else
+    case system = "發行版內建"
+    #endif
     case homebrew = "Homebrew"
     case pyenv = "pyenv"
     case uv = "uv"

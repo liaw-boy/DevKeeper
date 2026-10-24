@@ -18,11 +18,18 @@ public final class PythonInterpreterService: Sendable {
         let home = fm.homeDirectoryForCurrentUser.path
         var candidates: [(path: String, source: PythonSource)] = []
         
+        #if os(macOS)
         // /usr/bin/python3 is a stub that pops up the "install developer tools" dialog when the
         // Command Line Tools are missing, so only touch it when they are present.
         if fm.isExecutableFile(atPath: "/usr/bin/python3"), await commandLineToolsInstalled() {
             candidates.append(("/usr/bin/python3", .system))
         }
+        #else
+        // The distribution's own Python (managed by the package manager).
+        if fm.isExecutableFile(atPath: "/usr/bin/python3") {
+            candidates.append(("/usr/bin/python3", .system))
+        }
+        #endif
         for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
             let names = (try? fm.contentsOfDirectory(atPath: dir)) ?? []
             for name in names.sorted() where name.range(of: #"^python3(\.\d+)?$"#, options: .regularExpression) != nil {

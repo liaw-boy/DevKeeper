@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    name: macOS (app + CLI + tests)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build -c release
+      - name: Test
+        run: swift test
+      - name: CLI smoke test
+        run: |
+          .build/release/devkeeper-cli version
+          .build/release/devkeeper-cli python list
+
+  linux:
+    name: Linux (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["swift:5.10-jammy", "swift:6.0-noble"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      # The SwiftUI app is macOS-only; build just the shared core and the command-line tool.
+      - name: Build CLI
+        run: swift build -c release --product devkeeper-cli
+      - name: Test core
+        run: swift test
+      - name: CLI smoke test
+        run: |
+          .build/release/devkeeper-cli version
+          .build/release/devkeeper-cli python list
+          .build/release/devkeeper-cli scan
+          .build/release/devkeeper-cli scan --json > scan.json
+          .build/release/devkeeper-cli audit --json > audit.json || test $? -eq 1
+          head -c 400 scan.json
+
+  linux-release-binary:
+    name: Linux release binary
+    runs-on: ubuntu-latest
+    needs: linux
+    container: swift:6.0-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build static CLI
+        run: swift build -c release --product devkeeper-cli --static-swift-stdlib
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp .build/release/devkeeper-cli dist/
+          cd dist && tar czf devkeeper-cli-linux-x86_64.tar.gz devkeeper-cli && sha256sum devkeeper-cli-linux-x86_64.tar.gz > devkeeper-cli-linux-x86_64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devkeeper-cli-linux-x86_64
+          path: dist/
