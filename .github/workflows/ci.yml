@@ -59,13 +59,15 @@ jobs:
       # The local web interface: it must answer with the token and refuse without it.
       - name: Web interface smoke test
         run: |
+          apt-get install -y -qq curl > /dev/null
           .build/release/devkeeper-cli serve --port 8765 > serve.log &
+          SERVER_PID=$!
           sleep 3
           TOKEN=$(grep -o 'token=[0-9a-f]*' serve.log | head -1 | cut -d= -f2)
           curl -sf -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/python | head -c 200
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/api/python)" = 403
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: example.test' -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/python)" = 403
-          kill %1
+          kill $SERVER_PID
 
   linux-release-binary:
     name: Linux release binary
