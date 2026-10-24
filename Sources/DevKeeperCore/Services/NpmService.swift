@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public final class NpmService: Sendable {
     public static let shared = NpmService()
@@ -45,7 +48,7 @@ public final class NpmService: Sendable {
         request.setValue("DevKeeper/1.0", forHTTPHeaderField: "User-Agent")
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.devkeeperData(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 return (nil, nil, nil)
             }

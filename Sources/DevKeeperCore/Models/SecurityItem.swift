@@ -105,7 +105,7 @@ public struct VulnerabilityItem: Identifiable, Sendable, Hashable {
     
     public static func osvUrl(for identifier: String) -> URL? {
         let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil else { return nil }
+        guard InputValidator.fullyMatches(trimmed, pattern: #"[A-Za-z0-9._:-]{1,128}"#) else { return nil }
         return URL(string: "https://osv.dev/vulnerability/\(trimmed)")
     }
 }
@@ -190,6 +190,38 @@ public struct PackageVulnerabilityGroup: Identifiable, Sendable {
         self.currentVersion = targets
             .map { $0.currentVersion }
             .min { $0.compare($1, options: .numeric) == .orderedAscending } ?? currentVersion
+    }
+    
+    /// Groups vulnerabilities by package (merging environments), most severe first.
+    public static func grouped(from vulnerabilities: [VulnerabilityItem]) -> [PackageVulnerabilityGroup] {
+        var groups: [String: [VulnerabilityItem]] = [:]
+        for v in vulnerabilities {
+            let key = "\(v.ecosystem.lowercased()):\(v.packageName.lowercased()):\(v.projectPath ?? "")"
+            groups[key, default: []].append(v)
+        }
+        func severityScore(_ s: VulnerabilitySeverity) -> Int {
+            switch s {
+            case .critical: return 4
+            case .high: return 3
+            case .medium: return 2
+            case .low: return 1
+            case .unknown: return 0
+            }
+        }
+        return groups.values.map { items in
+            let first = items[0]
+            return PackageVulnerabilityGroup(
+                packageName: first.packageName,
+                ecosystem: first.ecosystem,
+                currentVersion: first.currentVersion,
+                vulnerabilities: items
+            )
+        }.sorted { a, b in
+            if a.highestSeverity != b.highestSeverity {
+                return severityScore(a.highestSeverity) > severityScore(b.highestSeverity)
+            }
+            return a.packageName < b.packageName
+        }
     }
     
     /// First available fix command (used for display and copy).

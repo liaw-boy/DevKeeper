@@ -113,17 +113,20 @@ public final class PythonEnvironmentService: Sendable {
     
     /// True when a package lives inside Apple's Xcode or Command Line Tools bundle. Those copies come with the
     /// developer tools, only Apple can update them, and users cannot change them.
-    public static func isAppleBundledLocation(_ location: String?) -> Bool {
+    public static func isOSManagedLocation(_ location: String?) -> Bool {
         guard let location else { return false }
-        return location.contains("/Xcode.app/") || location.contains("/CommandLineTools/")
+        // macOS: copies shipped inside Xcode / Command Line Tools.
+        if location.contains("/Xcode.app/") || location.contains("/CommandLineTools/") { return true }
+        // Debian/Ubuntu: packages installed by apt live in /usr/lib/python3/dist-packages.
+        return location.hasPrefix("/usr/lib/python3/") || location.hasPrefix("/usr/lib/python3.")
     }
     
     /// Same as `installedPackages`, but leaves out packages bundled inside Xcode / Command Line Tools.
-    public func installedPackagesExcludingAppleBundle(pythonPath: String) async -> [(name: String, version: String)] {
+    public func installedPackagesExcludingOSManaged(pythonPath: String) async -> [(name: String, version: String)] {
         let q = InputValidator.shellQuoted(pythonPath)
         guard let out = try? await ShellExecutor.shared.run(command: "\(q) -m pip list -v --format=json 2>/dev/null"),
               let items = decode(out) else { return [] }
-        return items.filter { !Self.isAppleBundledLocation($0.location) }.map { ($0.name, $0.version) }
+        return items.filter { !Self.isOSManagedLocation($0.location) }.map { ($0.name, $0.version) }
     }
     
     /// Packages inside a uv tool environment (these venvs do not ship pip).

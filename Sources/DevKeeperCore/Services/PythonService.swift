@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public final class PythonService: Sendable {
     public static let shared = PythonService()
@@ -6,22 +9,24 @@ public final class PythonService: Sendable {
     private struct PipPackageInfo: Decodable {
         let name: String
         let version: String
+        let location: String?
     }
     
     private struct PipOutdatedItem: Decodable {
         let name: String
         let version: String
         let latest_version: String
+        let location: String?
     }
     
     /// Fetches all packages that are genuinely upgradable and compatible with the current local Python runtime
     public func fetchOutdatedMap() async -> [String: String] {
         do {
-            let rawJson = try await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) -m pip list --outdated --format=json")
+            let rawJson = try await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) -m pip list --outdated -v --format=json")
             guard let data = extractJsonData(from: rawJson) else { return [:] }
             let items = try JSONDecoder().decode([PipOutdatedItem].self, from: data)
             var map: [String: String] = [:]
-            for item in items {
+            for item in items where !PythonEnvironmentService.isOSManagedLocation(item.location) {
                 map[item.name.lowercased()] = item.latest_version
             }
             return map
@@ -31,12 +36,14 @@ public final class PythonService: Sendable {
     }
     
     public func fetchInstalledPackages() async throws -> [PackageItem] {
-        let rawJson = try await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) -m pip list --format=json")
+        let rawJson = try await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) -m pip list -v --format=json")
         guard let data = extractJsonData(from: rawJson) else {
             return []
         }
         
+        // Packages owned by the OS (apt, Xcode) must not be upgraded with pip, so they are not listed.
         let pipItems = try JSONDecoder().decode([PipPackageInfo].self, from: data)
+            .filter { !PythonEnvironmentService.isOSManagedLocation($0.location) }
         var packages: [PackageItem] = []
         
         for item in pipItems {
@@ -61,7 +68,7 @@ public final class PythonService: Sendable {
         request.setValue("DevKeeper/1.0", forHTTPHeaderField: "User-Agent")
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.devkeeperData(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 return (nil, nil, nil)
             }

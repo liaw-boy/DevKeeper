@@ -3,6 +3,15 @@ import Foundation
 public final class ShellExecutor: @unchecked Sendable {
     public static let shared = ShellExecutor()
     
+    /// zsh is the macOS login shell; Linux distributions only guarantee a POSIX sh.
+    private static var shellPath: String {
+        #if os(Linux)
+        return "/bin/sh"
+        #else
+        return "/bin/zsh"
+        #endif
+    }
+    
     private let statusLock = NSLock()
     private var _lastStreamStatus: Int32?
     
@@ -50,7 +59,7 @@ public final class ShellExecutor: @unchecked Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.executableURL = URL(fileURLWithPath: Self.shellPath)
                 
                 var env = ProcessInfo.processInfo.environment
                 env["PATH"] = self.standardPath + ":" + (env["PATH"] ?? "")
@@ -106,7 +115,7 @@ public final class ShellExecutor: @unchecked Sendable {
         return AsyncStream { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.executableURL = URL(fileURLWithPath: Self.shellPath)
                 
                 var env = ProcessInfo.processInfo.environment
                 env["PATH"] = self.standardPath + ":" + (env["PATH"] ?? "")

@@ -1,3 +1,4 @@
+import DevKeeperCore
 import SwiftUI
 
 /// One confirmation for all alternative fixes proposed after a one-click fix.

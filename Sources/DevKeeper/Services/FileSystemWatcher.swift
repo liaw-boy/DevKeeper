@@ -1,3 +1,4 @@
+import DevKeeperCore
 import Foundation
 
 public final class FileSystemWatcher: @unchecked Sendable {
