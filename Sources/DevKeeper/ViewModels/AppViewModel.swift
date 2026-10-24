@@ -78,7 +78,7 @@ public final class AppViewModel: ObservableObject {
     
     // Application Version Info
     public static let appVersion: String = {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0"
     }()
     public static let appBuild: String = {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "2026.10.23"

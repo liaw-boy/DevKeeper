@@ -17,8 +17,8 @@ swift scripts/generate_icon.swift "$ICONSET"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$(dirname "$ICONSET")"
 
-VERSION="1.2.0"
-BUILD="2026.10.23"
+VERSION="1.3.0"
+BUILD="2026.10.24"
 
 echo "3. 正在寫入 Info.plist 系統設定 (v$VERSION)..."
 cat > "$APP/Contents/Info.plist" <<EOF
