@@ -310,7 +310,7 @@ public struct MenuBarView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 11.5, weight: .bold))
-                            Text("全部升級 (\(upgradableCount))")
+                            Text("升級 npm / Homebrew (\(upgradableCount))")
                                 .font(.system(size: 12, weight: .semibold))
                                 .monospacedDigit()
                         }

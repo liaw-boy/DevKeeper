@@ -19,6 +19,9 @@ public final class FileSystemWatcher: @unchecked Sendable {
             "/opt/homebrew/Cellar",
             "/opt/homebrew/Caskroom",
             "/opt/homebrew/lib/node_modules",
+            "/usr/local/Cellar",
+            "/usr/local/Caskroom",
+            "/usr/local/lib/node_modules",
             "\(home)/.local/bin"
         ]
         

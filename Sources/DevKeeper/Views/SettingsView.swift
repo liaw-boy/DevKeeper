@@ -1,4 +1,5 @@
 import DevKeeperCore
+import ServiceManagement
 import SwiftUI
 
 public struct SettingsView: View {
@@ -9,9 +10,30 @@ public struct SettingsView: View {
     @AppStorage("enableFSEvents") private var enableFSEvents: Bool = true
     @AppStorage("checkSelfUpdate") private var checkSelfUpdate: Bool = true
     @AppStorage("enableSecurityAudit") private var enableSecurityAudit: Bool = true
-    @AppStorage("launchAtLogin") private var launchAtLogin: Bool = true
     @AppStorage(StatusBarController.showStatusItemKey) private var showStatusBarItem: Bool = true
     @AppStorage("projectsRootPath") private var projectsRootPath: String = ""
+    
+    @State private var launchAtLogin: Bool = false
+    @State private var launchAtLoginError: String?
+    
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin },
+            set: { newValue in
+                do {
+                    if newValue {
+                        try SMAppService.mainApp.register()
+                    } else {
+                        try SMAppService.mainApp.unregister()
+                    }
+                    launchAtLoginError = nil
+                } catch {
+                    launchAtLoginError = "無法變更開機啟動：\(error.localizedDescription)（需從 DevKeeper.app 執行）"
+                }
+                launchAtLogin = SMAppService.mainApp.status == .enabled
+            }
+        )
+    }
     
     
     public init(viewModel: AppViewModel) {
@@ -70,8 +92,8 @@ public struct SettingsView: View {
                         
                         // Row 2: FSEvents Toggle
                         settingToggleRow(
-                            title: "FSEvents 即時檔案目錄監聽",
-                            subtitle: "監聽 /opt/homebrew 與 node_modules，終端機指令變更時毫秒級自動更新狀態",
+                            title: "安裝目錄變更監聽",
+                            subtitle: "監聽 Applications、Homebrew 與全域 node_modules，偵測到變更後約 2 秒自動重新整理",
                             isOn: $enableFSEvents
                         )
                         
@@ -108,9 +130,15 @@ public struct SettingsView: View {
                     
                     settingToggleRow(
                         title: "開機自動啟動常駐",
-                        subtitle: "登入系統時自動於頂部選單列啟動 DevKeeper 守護開發環境",
-                        isOn: $launchAtLogin
+                        subtitle: "登入系統時自動啟動 DevKeeper",
+                        isOn: launchAtLoginBinding
                     )
+                    
+                    if let launchAtLoginError {
+                        Text(launchAtLoginError)
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.warningAmber)
+                    }
                 }
                 
                 // 本機專案資料夾（供安全稽核掃描專案相依套件使用）
@@ -154,7 +182,7 @@ public struct SettingsView: View {
                             Text("DevKeeper for macOS")
                                 .font(.system(size: 14, weight: .bold))
                                 .foregroundColor(.primary)
-                            Text("版本 \(AppViewModel.appVersion) (Build \(AppViewModel.appBuild)) • 原生 Swift 6.4 + SwiftUI")
+                            Text("版本 \(AppViewModel.appVersion) (Build \(AppViewModel.appBuild)) • 原生 Swift + SwiftUI")
                                 .font(.system(size: 11.5))
                                 .foregroundColor(.secondary)
                             Text("整合 Homebrew、npm、Python 與 Google OSV 安全稽核")
@@ -171,6 +199,9 @@ public struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Theme.canvasBackground)
+        .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
+        .onChange(of: scanIntervalMinutes) { viewModel.restartBackgroundTimer() }
+        .onChange(of: enableFSEvents) { viewModel.applyFileWatcherSetting() }
     }
     
     // MARK: - Reusable Full-Width Settings Card

@@ -77,7 +77,7 @@ public struct MainView: View {
                             Circle()
                                 .fill(Theme.successGreen)
                                 .frame(width: 6.5, height: 6.5)
-                            Text("就緒 (FSEvents 即時監聽)")
+                            Text("就緒")
                                 .font(.system(size: 11))
                                 .foregroundColor(.secondary)
                         }

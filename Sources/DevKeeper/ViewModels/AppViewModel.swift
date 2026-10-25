@@ -78,10 +78,10 @@ public final class AppViewModel: ObservableObject {
     
     // Application Version Info
     public static let appVersion: String = {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.3.0"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? DevKeeperInfo.version
     }()
     public static let appBuild: String = {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "2026.10.23"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "dev"
     }()
     
     // Install Sheet control
@@ -89,7 +89,7 @@ public final class AppViewModel: ObservableObject {
     
     // GitHub Self-Update
     @Published public var appUpdateAvailable: Bool = false
-    @Published public var latestAppVersion: String = "1.0.0"
+    @Published public var latestAppVersion: String = DevKeeperInfo.version
     @Published public var appReleaseNotes: String = ""
     @Published public var appDownloadUrl: String? = nil
     
@@ -103,22 +103,40 @@ public final class AppViewModel: ObservableObject {
             await self.loadSystemInfo()
             await self.scanAll()
             
-            // Start automatic file system watcher for real-time external change detection
-            FileSystemWatcher.shared.startWatching { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self = self, !self.isActionRunning else { return }
-                    self.appendLog("偵測到系統目錄變更，自動重新整理套件狀態...")
-                    await self.scanAll()
-                }
+            self.applyFileWatcherSetting()
+            self.restartBackgroundTimer()
+        }
+    }
+    
+    private static func boolSetting(_ key: String, default value: Bool = true) -> Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? value
+    }
+    
+    /// Starts or stops the directory watcher according to the `enableFSEvents` preference.
+    public func applyFileWatcherSetting() {
+        guard Self.boolSetting("enableFSEvents") else {
+            FileSystemWatcher.shared.stopWatching()
+            return
+        }
+        FileSystemWatcher.shared.startWatching { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self = self, !self.isActionRunning else { return }
+                self.appendLog("偵測到系統目錄變更，自動重新整理套件狀態...")
+                await self.scanAll()
             }
-            
-            // Periodic background scan every 30 minutes (1800s)
-            self.backgroundTimer = Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self = self, !self.isActionRunning else { return }
-                    self.appendLog("執行定時背景掃描檢查 (每 30 分鐘)...")
-                    await self.scanAll()
-                }
+        }
+    }
+    
+    /// Restarts the periodic scan using the `scanIntervalMinutes` preference (default 30).
+    public func restartBackgroundTimer() {
+        backgroundTimer?.invalidate()
+        let stored = UserDefaults.standard.integer(forKey: "scanIntervalMinutes")
+        let minutes = stored > 0 ? stored : 30
+        backgroundTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60), repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self, !self.isActionRunning else { return }
+                self.appendLog("執行定時背景掃描檢查 (每 \(minutes) 分鐘)...")
+                await self.scanAll()
             }
         }
     }
@@ -178,7 +196,7 @@ public final class AppViewModel: ObservableObject {
         async let pyTask = scanPython()
         async let brewTask = scanBrew()
         async let dbTask = scanDatabases()
-        async let selfUpdateTask = checkSelfUpdate()
+        async let selfUpdateTask: Void = checkSelfUpdateIfEnabled()
         
         _ = await (aiTask, npmTask, pyTask, brewTask, dbTask, selfUpdateTask)
         
@@ -186,8 +204,9 @@ public final class AppViewModel: ObservableObject {
         self.isScanning = false
         appendLog("掃描完成。發現 \(totalOutdatedCount) 個待升級項目。")
         
-        // Run security audit in background
-        Task { await self.scanSecurityAudit() }
+        if Self.boolSetting("enableSecurityAudit") {
+            Task { await self.scanSecurityAudit() }
+        }
     }
     
     public func scanAITools() async {
@@ -229,10 +248,17 @@ public final class AppViewModel: ObservableObject {
             self.liveLogOutput += chunk
         }
         
-        appendLog("\(item.name) 升級程序完成。")
+        let local = await AIToolService.shared.detectLocalTool(item: item)
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             if let idx = self.aiTools.firstIndex(where: { $0.id == item.id }) {
-                self.aiTools[idx].currentVersion = item.latestVersion ?? item.currentVersion
+                self.aiTools[idx].isInstalled = local.isInstalled
+                self.aiTools[idx].currentVersion = local.version
+                self.aiTools[idx].binaryPath = local.binaryPath
+                if self.aiTools[idx].isOutdated {
+                    appendLog("\(item.name) 升級後版本仍為 \(local.version)，低於最新版 \(item.latestVersion ?? "?")，升級可能未成功，請查看日誌。")
+                } else {
+                    appendLog("\(item.name) 升級完成，目前版本 \(local.version)。")
+                }
             }
             self.isActionRunning = false
             self.currentActionPackageId = nil
@@ -287,9 +313,9 @@ public final class AppViewModel: ObservableObject {
         self.remediationNotes = self.remediationNotes.filter { isCurrent($0.key) }
         self.isAuditingSecurity = false
         if !detectedVulns.isEmpty {
-            appendLog("⚠️ 全面安全稽核完成：偵測到 \(detectedVulns.count) 個已知安全性弱點 (CVE/GHSA)！")
+            appendLog("全面安全稽核完成：偵測到 \(detectedVulns.count) 個已知安全性弱點 (CVE/GHSA)！")
         } else {
-            appendLog("✅ 全面安全稽核完成：本機套件與開發專案均未發現已知 CVE 弱點。")
+            appendLog("全面安全稽核完成：本機套件與開發專案均未發現已知 CVE 弱點。")
         }
     }
     
@@ -658,6 +684,10 @@ public final class AppViewModel: ObservableObject {
         let failedKeys = failedJobs.map { $0.0.key(for: $0.1) }
         await scanSecurityAudit()
         proposeBatch(keys: failedKeys)
+    }
+    
+    private func checkSelfUpdateIfEnabled() async {
+        if Self.boolSetting("checkSelfUpdate") { await checkSelfUpdate() }
     }
     
     public func checkSelfUpdate() async {
