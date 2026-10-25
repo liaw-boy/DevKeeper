@@ -1,425 +1,263 @@
+import AppKit
 import DevKeeperCore
 import SwiftUI
-import AppKit
 
-/// Menu bar popover. Uses the same tokens and shapes as the main window
-/// (Theme colors, tinted icon tiles, card surfaces, gradient primary button).
+/// Content of the menu bar panel: what is outdated, known vulnerabilities, and quick actions.
 public struct MenuBarView: View {
     @ObservedObject var viewModel: AppViewModel
-    @State private var showMore = false
-
+    var onClose: () -> Void = {}
+    @State private var confirmingUpgrade = false
+    
     private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
     }()
-
-    public init(viewModel: AppViewModel) {
+    
+    public init(viewModel: AppViewModel, onClose: @escaping () -> Void = {}) {
         self.viewModel = viewModel
+        self.onClose = onClose
     }
-
-    private var allOutdatedItems: [PackageItem] {
-        (viewModel.npmPackages + viewModel.brewPackages + viewModel.pythonPackages).filter { $0.status.isOutdated }
+    
+    private struct PreviewItem: Identifiable {
+        let id: String
+        let name: String
+        let current: String
+        let latest: String
     }
-
-    /// Only npm and Homebrew are upgraded by the "upgrade all" action.
+    
+    /// Every outdated item, AI tools included, so the list matches the count in the menu bar.
+    private var outdatedItems: [PreviewItem] {
+        let tools = viewModel.aiTools.filter { $0.isOutdated }.map {
+            PreviewItem(id: "ai:\($0.id)", name: $0.name, current: $0.currentVersion, latest: $0.latestVersion ?? "")
+        }
+        let packages = (viewModel.npmPackages + viewModel.pythonPackages + viewModel.brewPackages)
+            .filter { $0.status.isOutdated }
+            .map { PreviewItem(id: "\($0.type.rawValue):\($0.name)", name: $0.name, current: $0.currentVersion, latest: $0.latestVersion ?? "") }
+        return tools + packages
+    }
+    
     private var upgradableCount: Int {
         viewModel.outdatedNpmCount + viewModel.outdatedBrewCount
     }
-
+    
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             header
-            summaryBanner
-            categoryCards
-            if !allOutdatedItems.isEmpty {
-                previewCard
+                .padding(.horizontal, DK.Space.l)
+                .padding(.vertical, DK.Space.m)
+            DKDivider()
+            summary
+                .padding(.horizontal, DK.Space.l)
+                .padding(.top, DK.Space.m)
+                .padding(.bottom, DK.Space.s)
+            categories
+                .padding(.horizontal, DK.Space.s)
+            let items = outdatedItems
+            if !items.isEmpty {
+                DKDivider()
+                    .padding(.top, DK.Space.s)
+                preview(items)
+                    .padding(.horizontal, DK.Space.l)
+                    .padding(.vertical, DK.Space.s)
             }
-            securityBanner
+            DKDivider()
+                .padding(.top, items.isEmpty ? DK.Space.s : 0)
             footer
+                .padding(.horizontal, DK.Space.l)
+                .padding(.vertical, DK.Space.m)
         }
-        .padding(14)
-        .frame(width: 380)
-        .background(Theme.canvasBackground)
-        .preferredColorScheme(.dark)
+        .frame(width: 340)
+        .background(
+            RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)
+                .fill(DK.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)
+                .stroke(DK.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous))
     }
-
-    // MARK: - Header
-
+    
+    // MARK: - Sections
+    
     private var header: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Theme.primaryGradient)
-                    .frame(width: 28, height: 28)
-                    .shadow(color: Theme.primaryIndigo.opacity(0.35), radius: 4, x: 0, y: 1.5)
-                Image(systemName: "cube.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.white)
-            }
-
+        HStack(spacing: DK.Space.s) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text("DevKeeper")
-                        .font(.system(size: 14, weight: .bold))
-                    Text("v\(AppViewModel.appVersion)")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.05))
-                        .clipShape(Capsule())
+                Text("DevKeeper")
+                    .font(DK.Font.bodyMedium)
+                    .foregroundColor(DK.textPrimary)
+                HStack(spacing: DK.Space.tight) {
+                    if busy { DKSpinner(size: 10) }
+                    Text(statusText)
                 }
-                HStack(spacing: 5) {
-                    if viewModel.isScanning || viewModel.isActionRunning {
-                        ProgressView().controlSize(.mini)
-                        Text(viewModel.isActionRunning ? "正在執行操作..." : "正在同步狀態...")
-                    } else {
-                        Circle().fill(Theme.successGreen).frame(width: 6, height: 6)
-                        Text(lastScanText)
-                    }
-                }
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(DK.Font.caption)
+                .foregroundColor(DK.textTertiary)
+                .lineLimit(1)
             }
-
             Spacer()
-
-            squareButton("arrow.clockwise", help: "立即重新掃描") {
+            // Text buttons: the panel has no overlay host, so icon-button tooltips would not show.
+            DKButton("檢查", kind: .ghost) {
                 Task { await viewModel.scanAll() }
             }
             .disabled(viewModel.isScanning || viewModel.isActionRunning)
-
-            squareButton("macwindow", help: "開啟 DevKeeper 主視窗") {
-                openMainWindow()
+            DKButton("主視窗", kind: .ghost) { openMainWindow() }
+        }
+    }
+    
+    private var busy: Bool {
+        viewModel.isScanning || viewModel.isActionRunning || viewModel.isAuditingSecurity
+    }
+    
+    private var statusText: String {
+        if viewModel.isActionRunning { return "執行中…" }
+        if viewModel.isScanning { return "檢查中…" }
+        if viewModel.isAuditingSecurity { return "稽核弱點中…" }
+        if let date = viewModel.lastScanDate { return "上次檢查 \(Self.timeFormatter.string(from: date))" }
+        return "尚未檢查"
+    }
+    
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: DK.Space.xs) {
+            let count = viewModel.totalOutdatedCount
+            Text(count > 0 ? "\(count) 項可升級" : "全部都是最新版本")
+                .font(DK.Font.heading)
+                .foregroundColor(DK.textPrimary)
+            let vulnerabilities = viewModel.vulnerabilityCount
+            Button {
+                openTab(.security)
+            } label: {
+                Text(vulnerabilities > 0 ? "\(vulnerabilities) 個已知安全弱點" : "沒有已知安全弱點")
+                    .font(DK.Font.caption)
+                    .foregroundColor(vulnerabilities > 0 ? DK.danger : DK.textSecondary)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(DKPressStyle())
         }
     }
-
-    private var lastScanText: String {
-        if let date = viewModel.lastScanDate {
-            return "上次檢查 \(Self.timeFormatter.string(from: date))"
-        }
-        return "就緒 (即時監聽)"
-    }
-
-    // MARK: - Summary
-
-    private var summaryBanner: some View {
-        let count = viewModel.totalOutdatedCount
-        let tint = count > 0 ? Theme.warningAmber : Theme.successGreen
-        return HStack(spacing: 10) {
-            tile(count > 0 ? "bolt.fill" : "checkmark", tint: tint, size: 30)
-
-            if count > 0 {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(count)")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(tint)
-                    Text("項可升級")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-            } else {
-                Text("所有項目均為最新")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(tint.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(tint.opacity(0.3), lineWidth: 1)
-        )
-    }
-
-    // MARK: - Categories
-
-    private var categoryCards: some View {
-        VStack(spacing: 6) {
-            categoryCard("AI 開發工具", "sparkles", Theme.primaryIndigo, viewModel.aiTools.count, viewModel.outdatedAIToolCount, .aiTools)
-            categoryCard("Homebrew", "shippingbox", Theme.warningAmber, viewModel.brewPackages.count, viewModel.outdatedBrewCount, .brew)
-            categoryCard("Python (pip)", "chevron.left.forwardslash.chevron.right", Theme.successGreen, viewModel.pythonPackages.count, viewModel.outdatedPythonCount, .python)
-            categoryCard("npm 全域工具", "cube", Theme.infoCyan, viewModel.npmPackages.count, viewModel.outdatedNpmCount, .npm)
+    
+    private var categories: some View {
+        VStack(spacing: 0) {
+            CategoryRow(title: NavigationTab.aiTools.title, outdated: viewModel.outdatedAIToolCount) { openTab(.aiTools) }
+            CategoryRow(title: NavigationTab.npm.title, outdated: viewModel.outdatedNpmCount) { openTab(.npm) }
+            CategoryRow(title: NavigationTab.python.title, outdated: viewModel.outdatedPythonCount) { openTab(.python) }
+            CategoryRow(title: NavigationTab.brew.title, outdated: viewModel.outdatedBrewCount) { openTab(.brew) }
         }
     }
-
-    private func categoryCard(_ title: String, _ symbol: String, _ tint: Color, _ count: Int, _ outdated: Int, _ tab: NavigationTab) -> some View {
-        Button {
-            openTab(tab)
-        } label: {
-            HStack(spacing: 10) {
-                tile(symbol, tint: tint, size: 26)
-
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-
-                Text("\(count)")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(.secondary)
-
-                Spacer(minLength: 4)
-
-                if outdated > 0 {
-                    Text("\(outdated) 待更")
-                        .font(.system(size: 10, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundColor(Theme.warningAmber)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Theme.warningAmber.opacity(0.14))
-                        .clipShape(Capsule())
-                } else {
-                    Text("最新")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundColor(Theme.successGreen)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .cardSurface()
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.bouncy(scale: 0.98))
-    }
-
-    // MARK: - Preview
-
-    private var previewCard: some View {
-        let items = Array(allOutdatedItems.prefix(4))
-        return VStack(spacing: 0) {
-            ForEach(items) { item in
-                HStack(spacing: 8) {
-                    Image(systemName: item.type.sfSymbol)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundColor(Theme.warningAmber)
-                        .frame(width: 14)
+    
+    private func preview(_ items: [PreviewItem]) -> some View {
+        VStack(alignment: .leading, spacing: DK.Space.tight) {
+            ForEach(items.prefix(4)) { item in
+                HStack(spacing: DK.Space.s) {
                     Text(item.name)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textPrimary)
                         .lineLimit(1)
-                    Spacer(minLength: 8)
-                    HStack(spacing: 5) {
-                        Text(item.currentVersion)
-                            .foregroundColor(.secondary)
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(Theme.primaryIndigo)
-                        Text(item.latestVersion ?? "")
-                            .fontWeight(.semibold)
-                    }
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .monospacedDigit()
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.05))
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-
-                if item.id != items.last?.id {
-                    Divider().background(Theme.subtleBorder)
+                        .truncationMode(.middle)
+                    Spacer(minLength: DK.Space.s)
+                    Text("\(item.current) → \(item.latest)")
+                        .font(DK.Font.mono)
+                        .foregroundColor(DK.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(1)
                 }
             }
-
-            if allOutdatedItems.count > 4 {
-                Divider().background(Theme.subtleBorder)
+            if items.count > 4 {
                 Button {
-                    openMainWindow()
+                    openTab(.overview)
                 } label: {
-                    Text("還有 \(allOutdatedItems.count - 4) 項，於主視窗查看")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 7)
+                    Text("還有 \(items.count - 4) 項，在主視窗查看")
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textTertiary)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(DKPressStyle())
             }
         }
-        .cardSurface()
     }
-
-    // MARK: - Security
-
-    private var securityBanner: some View {
-        let count = viewModel.vulnerabilityCount
-        let tint = count > 0 ? Theme.dangerRed : Theme.successGreen
-        return Button {
-            if count > 0 { openTab(.security) } else { openMainWindow() }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: count > 0 ? "exclamationmark.shield.fill" : "checkmark.shield.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(tint)
-                Text(count > 0 ? "偵測到 \(count) 個安全性弱點 (CVE)" : "本機無已知安全性弱點")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.primary)
-                    .monospacedDigit()
-                Spacer()
-                Text(count > 0 ? "查看" : "總覽")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(tint)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(tint)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(tint.opacity(count > 0 ? 0.10 : 0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(tint.opacity(count > 0 ? 0.35 : 0.25), lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.bouncy(scale: 0.98))
-    }
-
-    // MARK: - Footer
-
+    
+    @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 8) {
-            if showMore {
-                VStack(spacing: 0) {
-                    moreRow("gearshape", "設定") { openTab(.settings) }
-                    Divider().background(Theme.subtleBorder)
-                    moreRow("shield.checkered", "安全稽核") { openTab(.security) }
-                    Divider().background(Theme.subtleBorder)
-                    moreRow("power", "結束 DevKeeper") { NSApplication.shared.terminate(nil) }
-                }
-                .cardSurface()
-                .transition(.opacity)
-            }
-
-            HStack(spacing: 8) {
-                if upgradableCount > 0 {
-                    Button {
+        if confirmingUpgrade {
+            VStack(alignment: .leading, spacing: DK.Space.s) {
+                Text("將升級清單上 \(upgradableCount) 個 npm 與 Homebrew 項目，不會升級其他套件。")
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: DK.Space.s) {
+                    Spacer()
+                    DKButton("取消") { confirmingUpgrade = false }
+                    DKButton("確認升級", kind: .primary) {
+                        confirmingUpgrade = false
                         Task {
                             await viewModel.upgradeAllOutdatedNpm()
                             await viewModel.upgradeAllOutdatedBrew()
                         }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 11.5, weight: .bold))
-                            Text("升級 npm / Homebrew (\(upgradableCount))")
-                                .font(.system(size: 12, weight: .semibold))
-                                .monospacedDigit()
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 6)
-                        .background(Theme.primaryGradient)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .shadow(color: Theme.primaryIndigo.opacity(0.4), radius: 6, x: 0, y: 2)
                     }
-                    .buttonStyle(.bouncy)
+                    .disabled(viewModel.isActionRunning || viewModel.isScanning || upgradableCount == 0)
+                }
+            }
+            // The number shown must match what will run; ask again if it changes.
+            .onChange(of: upgradableCount) { _, _ in confirmingUpgrade = false }
+        } else {
+            HStack(spacing: DK.Space.s) {
+                if upgradableCount > 0 {
+                    DKButton("升級 npm 與 Homebrew（\(upgradableCount)）") {
+                        confirmingUpgrade = true
+                    }
                     .disabled(viewModel.isActionRunning || viewModel.isScanning)
-                    .help("升級 npm 與 Homebrew 的待升級項目")
                 }
-
-                Spacer()
-
-                squareButton(showMore ? "chevron.down" : "ellipsis", help: "更多") {
-                    withAnimation(.easeOut(duration: 0.15)) { showMore.toggle() }
-                }
+                Spacer(minLength: 0)
+                DKButton("設定", kind: .ghost) { openTab(.settings) }
+                DKButton("結束", kind: .ghost) { NSApplication.shared.terminate(nil) }
             }
         }
     }
-
-    private func moreRow(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
-        MoreRow(icon: icon, title: title, action: action)
-    }
-
-    // MARK: - Shared pieces
-
-    private func tile(_ symbol: String, tint: Color, size: CGFloat) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(tint.opacity(0.12))
-                .frame(width: size, height: size)
-            Image(systemName: symbol)
-                .font(.system(size: size * 0.46, weight: .medium))
-                .foregroundColor(tint)
-        }
-    }
-
-    private func squareButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundColor(.primary)
-                .frame(width: 28, height: 28)
-                .background(Color.white.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.bouncy)
-        .help(help)
-    }
-
+    
+    // MARK: - Navigation
+    
     private func openMainWindow() {
-        StatusBarController.shared?.closePopover()
+        onClose()
         NSApplication.shared.activate(ignoringOtherApps: true)
         if let window = NSApplication.shared.windows.first(where: { $0.canBecomeMain }) {
             window.makeKeyAndOrderFront(nil)
         }
     }
-
+    
     private func openTab(_ tab: NavigationTab) {
         viewModel.selectedTab = tab
         openMainWindow()
     }
 }
 
-private extension View {
-    /// Same surface as the main window's metric cards.
-    func cardSurface() -> some View {
-        self.background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Theme.subtleBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct MoreRow: View {
-    let icon: String
+private struct CategoryRow: View {
     let title: String
+    let outdated: Int
     let action: () -> Void
-    @State private var hovering = false
-
+    @State private var isHovering = false
+    
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .frame(width: 18)
-                    .foregroundColor(.secondary)
+            HStack {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DK.Font.body)
+                    .foregroundColor(DK.textPrimary)
                 Spacer()
+                Text(outdated > 0 ? "\(outdated) 可升級" : "最新")
+                    .font(DK.Font.caption)
+                    .monospacedDigit()
+                    .foregroundColor(outdated > 0 ? DK.textPrimary : DK.textTertiary)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(hovering ? Color.white.opacity(0.06) : Color.clear)
+            .padding(.horizontal, DK.Space.s)
+            .frame(height: DK.controlHeight)
+            .background(
+                RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
+                    .fill(isHovering ? DK.surfaceHover : Color.clear)
+            )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .buttonStyle(DKPressStyle())
+        .onHover { isHovering = $0 }
     }
 }

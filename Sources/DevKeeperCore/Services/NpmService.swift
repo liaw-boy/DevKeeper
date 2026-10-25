@@ -71,9 +71,16 @@ public final class NpmService: Sendable {
         return ShellExecutor.shared.stream(command: command)
     }
     
+    /// The command that upgrades the listed global packages, or nil when a name is not allowed.
+    public static func upgradeAllCommand(packages: [String]) -> String? {
+        guard !packages.isEmpty, packages.allSatisfy(InputValidator.isValidPackageName) else { return nil }
+        return "npm install -g " + packages.map { "\($0)@latest" }.joined(separator: " ")
+    }
+    
     public func upgradeAll(packages: [String]) -> AsyncStream<String> {
-        guard packages.allSatisfy(InputValidator.isValidPackageName) else { return ShellExecutor.shared.rejectedStream(reason: "套件名稱含不允許的字元") }
-        let command = "npm install -g " + packages.map { "\($0)@latest" }.joined(separator: " ")
+        guard let command = Self.upgradeAllCommand(packages: packages) else {
+            return ShellExecutor.shared.rejectedStream(reason: "沒有可升級的項目，或套件名稱含不允許的字元")
+        }
         return ShellExecutor.shared.stream(command: command)
     }
     

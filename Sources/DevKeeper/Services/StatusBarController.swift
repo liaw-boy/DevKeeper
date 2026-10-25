@@ -15,20 +15,30 @@ public final class StatusBarController: NSObject {
     public static var shared: StatusBarController?
     
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
     private let viewModel: AppViewModel
     private var cancellables = Set<AnyCancellable>()
+    private var panel: MenuBarPanel?
+    private var outsideClickMonitor: Any?
+    private var ownClickMonitor: Any?
+    private var appSwitchObserver: NSObjectProtocol?
+    private var lastBadgeCount = -1
+    /// When the panel last closed because it lost focus; clicking the status item at that moment must not reopen it.
+    private var lastAutoClose = Date.distantPast
     
     public init(viewModel: AppViewModel) {
         self.viewModel = viewModel
         super.init()
         
         setupStatusItem()
-        setupPopover()
         observeViewModel()
         observeVisibilitySetting()
         
         StatusBarController.shared = self
+        
+        // Development aid for screenshots: open the panel without clicking the status item.
+        if ProcessInfo.processInfo.environment["DEVKEEPER_SHOW_MENU_PANEL"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.showPanel(autoDismiss: false) }
+        }
     }
     
     /// UserDefaults key toggled from the Settings page.
@@ -43,143 +53,137 @@ public final class StatusBarController: NSObject {
     }
     
     private func applyVisibility() {
-        let defaults = UserDefaults.standard
-        let show = defaults.object(forKey: Self.showStatusItemKey) as? Bool ?? true
+        let show = UserDefaults.standard.object(forKey: Self.showStatusItemKey) as? Bool ?? true
         guard statusItem.isVisible != show else { return }
-        if !show { closePopover() }
+        if !show { closePanel() }
         statusItem.isVisible = show
     }
     
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.imagePosition = .imageLeft
-            button.target = self
-            button.action = #selector(togglePopover(_:))
-            button.sendAction(on: [.leftMouseUp])
-            updateBadge()
-        }
-    }
-    
-    private func setupPopover() {
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
-        
-        popover.contentViewController = makeHostingController()
-    }
-    
-    private func makeHostingController() -> NSHostingController<MenuBarView> {
-        let hosting = NSHostingController(rootView: MenuBarView(viewModel: viewModel))
-        hosting.sizingOptions = .preferredContentSize
-        return hosting
+        guard let button = statusItem.button else { return }
+        // A template image is tinted by macOS, so it stays readable on light and dark menu bars.
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        let image = NSImage(systemSymbolName: "shippingbox", accessibilityDescription: "DevKeeper")?.withSymbolConfiguration(config)
+        image?.isTemplate = true
+        button.image = image
+        button.imagePosition = .imageLeading
+        button.target = self
+        button.action = #selector(togglePanel(_:))
+        button.sendAction(on: [.leftMouseUp])
+        updateBadge()
     }
     
     private func observeViewModel() {
+        // Log output streams in many small changes; only redraw once things settle and the count changed.
         viewModel.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.updateBadge()
-                }
-            }
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateBadge() }
             .store(in: &cancellables)
     }
     
     public func updateBadge() {
         guard let button = statusItem.button else { return }
         let count = viewModel.totalOutdatedCount
-        button.title = ""
-        button.attributedTitle = NSAttributedString(string: "")
-        button.image = createMergedBadgeImage(count: count)
+        guard count != lastBadgeCount else { return }
+        lastBadgeCount = count
+        button.title = count > 0 ? "\(count)" : ""
+        button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        button.setAccessibilityLabel(count > 0 ? "DevKeeper，\(count) 項可升級" : "DevKeeper")
     }
     
-    private func createMergedBadgeImage(count: Int) -> NSImage {
-        let iconSize: CGFloat = 17.0
-        let config = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [NSColor.white]))
-        guard let baseIcon = NSImage(systemSymbolName: "cube.fill", accessibilityDescription: "DevKeeper")?.withSymbolConfiguration(config) else {
-            return NSImage()
-        }
-        
-        if count == 0 {
-            baseIcon.isTemplate = true
-            return baseIcon
-        }
-        
-        let text = "\(count)"
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .bold)
-        let textAttrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.white
-        ]
-        let textSize = (text as NSString).size(withAttributes: textAttrs)
-        
-        let badgeH: CGFloat = 13.0
-        let badgeW = max(badgeH, textSize.width + 6.0)
-        
-        // Canvas width: base icon + offset overlapping badge
-        let overlapOffset: CGFloat = 9.5
-        let canvasW = overlapOffset + badgeW
-        let canvasH: CGFloat = 20.0
-        
-        let img = NSImage(size: NSSize(width: canvasW, height: canvasH), flipped: false) { rect in
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            
-            // 1. Draw pure bright white cube icon
-            let iconY: CGFloat = 1.5
-            let iconRect = NSRect(x: 0, y: iconY, width: iconSize, height: iconSize)
-            baseIcon.draw(in: iconRect)
-            
-            // 2. Badge position (top-right overlapping the cube)
-            let badgeY: CGFloat = 7.0
-            let badgeRect = NSRect(x: overlapOffset, y: badgeY, width: badgeW, height: badgeH)
-            
-            // Transparent cut-out mask around badge to cleanly carve into the cube
-            ctx.saveGState()
-            ctx.setBlendMode(.clear)
-            let cutoutRect = badgeRect.insetBy(dx: -1.5, dy: -1.5)
-            let cutoutPath = CGPath(roundedRect: cutoutRect, cornerWidth: cutoutRect.height / 2, cornerHeight: cutoutRect.height / 2, transform: nil)
-            ctx.addPath(cutoutPath)
-            ctx.fillPath()
-            ctx.restoreGState()
-            
-            // 3. Draw badge capsule in vibrant orange (#ea6f47)
-            let badgePath = NSBezierPath(roundedRect: badgeRect, xRadius: badgeH / 2, yRadius: badgeH / 2)
-            NSColor(red: 0.918, green: 0.435, blue: 0.278, alpha: 1.0).setFill()
-            badgePath.fill()
-            
-            // 4. Draw number text mathematically centered down to the exact pixel (top=3px, bottom=3px, left=4px, right=4px)
-            let textX = badgeRect.origin.x + (badgeW - textSize.width) / 2
-            let textY = badgeRect.midY - font.capHeight / 2 + font.descender - 0.75
-            (text as NSString).draw(at: NSPoint(x: textX, y: textY), withAttributes: textAttrs)
-            
-            return true
-        }
-        
-        img.isTemplate = false
-        return img
-    }
+    // MARK: - Panel
     
-    @objc private func togglePopover(_ sender: AnyObject?) {
-        guard let button = statusItem.button else { return }
-        
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            updateBadge()
-            // Always refresh hosting controller with current state
-            popover.contentViewController = makeHostingController()
-            
-            // Show centered directly beneath the status item button
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+    @objc private func togglePanel(_ sender: AnyObject?) {
+        if panel != nil {
+            closePanel()
+        } else if Date().timeIntervalSince(lastAutoClose) > 0.3 {
+            showPanel()
         }
     }
     
-    public func closePopover() {
-        if popover.isShown {
-            popover.performClose(nil)
+    private func showPanel(autoDismiss: Bool = true) {
+        guard panel == nil else { return }
+        guard let button = statusItem.button, let buttonWindow = button.window else { return }
+        let hosting = NSHostingView(rootView: MenuBarView(viewModel: viewModel) { [weak self] in self?.closePanel() })
+        let size = hosting.fittingSize
+        let panel = MenuBarPanel(size: size)
+        panel.contentView = hosting
+        panel.onCancel = { [weak self] in self?.closePanel() }
+        // Follows the main window, which is dark until the appearance setting lands.
+        panel.appearance = NSAppearance(named: .darkAqua)
+        
+        let buttonRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let visible = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        let x = min(max(buttonRect.midX - size.width / 2, visible.minX + 8), visible.maxX - size.width - 8)
+        panel.setFrameTopLeftPoint(NSPoint(x: x, y: buttonRect.minY - 6))
+        panel.makeKeyAndOrderFront(nil)
+        self.panel = panel
+        guard autoDismiss else { return }
+        
+        // Close on clicks elsewhere. Losing key status is not used: the panel does not activate the app,
+        // so it can resign key right after opening.
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated { self?.autoClose() }
         }
+        let statusWindow = buttonWindow
+        ownClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self, weak panel] event in
+            // Clicks on the status item are handled by togglePanel.
+            if event.window !== panel && event.window !== statusWindow {
+                MainActor.assumeIsolated { self?.autoClose() }
+            }
+            return event
+        }
+        // Switching apps with Cmd-Tab involves no click.
+        appSwitchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard app?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+            MainActor.assumeIsolated { self?.autoClose() }
+        }
+    }
+    
+    private func autoClose() {
+        guard panel != nil else { return }
+        lastAutoClose = Date()
+        closePanel()
+    }
+    
+    public func closePanel() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
+        if let ownClickMonitor { NSEvent.removeMonitor(ownClickMonitor) }
+        ownClickMonitor = nil
+        if let appSwitchObserver { NSWorkspace.shared.notificationCenter.removeObserver(appSwitchObserver) }
+        appSwitchObserver = nil
+        guard let closing = panel else { return }
+        closing.orderOut(nil)
+        panel = nil
+        // Keep the window alive until the click that closed it has finished dispatching.
+        DispatchQueue.main.async { _ = closing }
+    }
+}
+
+/// Borderless panel under the status item; draws its own rounded surface.
+final class MenuBarPanel: NSPanel {
+    var onCancel: () -> Void = {}
+    
+    init(size: NSSize) {
+        super.init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isFloatingPanel = true
+        level = .popUpMenu
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = true
+        hidesOnDeactivate = false
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+    }
+    
+    override var canBecomeKey: Bool { true }
+    
+    /// Escape.
+    override func cancelOperation(_ sender: Any?) {
+        onCancel()
     }
 }

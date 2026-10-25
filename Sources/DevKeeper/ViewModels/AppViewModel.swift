@@ -1051,13 +1051,32 @@ public final class AppViewModel: ObservableObject {
         await scanNpm()
     }
     
+    /// Outdated Homebrew formulae and casks shown in the list; only these are upgraded.
+    private var outdatedBrewNames: (formulae: [String], casks: [String]) {
+        let outdated = brewPackages.filter { $0.status.isOutdated }
+        return (outdated.filter { $0.type == .brewFormula }.map(\.name), outdated.filter { $0.type == .brewCask }.map(\.name))
+    }
+    
+    /// Exact commands run by "upgrade npm and Homebrew"; listed in confirmation panels before running.
+    public var upgradeAllCommands: [String] {
+        var commands: [String] = []
+        if let npm = NpmService.upgradeAllCommand(packages: npmPackages.filter { $0.status.isOutdated }.map(\.name)) {
+            commands.append(npm)
+        }
+        let brew = outdatedBrewNames
+        commands.append(contentsOf: BrewService.upgradeCommands(formulae: brew.formulae, casks: brew.casks) ?? [])
+        return commands
+    }
+    
     public func upgradeAllOutdatedBrew() async {
         guard !isActionRunning else { return }
+        let names = outdatedBrewNames
+        guard !names.formulae.isEmpty || !names.casks.isEmpty else { return }
         isActionRunning = true
-        appendLog("正在執行 brew upgrade...")
+        appendLog("正在升級 \(names.formulae.count + names.casks.count) 個 Homebrew 項目...")
         liveLogOutput = ""
         
-        let stream = BrewService.shared.upgradeAll()
+        let stream = BrewService.shared.upgrade(formulae: names.formulae, casks: names.casks)
         for await chunk in stream {
             self.liveLogOutput += chunk
         }
