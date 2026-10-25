@@ -103,11 +103,11 @@ devkeeper-cli scan
 # 2. 稽核安全弱點（有弱點時結束代碼為 1，可用在 CI）
 devkeeper-cli audit
 
-# 3. 先預覽修復會執行哪些指令，不會改動任何東西
-devkeeper-cli fix --dry-run
+# 3. 預覽修復會執行哪些指令（不加 --yes 只會預覽，不會改動任何東西）
+devkeeper-cli fix
 
 # 4. 確認後執行
-devkeeper-cli fix
+devkeeper-cli fix --yes
 ```
 
 `audit` 的輸出類似下面這樣（套件名稱與編號為範例）：
@@ -127,9 +127,9 @@ devkeeper-cli fix
 | `2` | `fix` 後仍有無法修復的項目 |
 | `64` | 指令或參數錯誤 |
 
-> **修復前請先預覽。** `fix` 會真的升級、搬移或移除套件，而且是直接升到「沒有已知弱點的版本」。某個套件可能被其他套件限制了版本範圍，升級後這些套件會不相容。執行後建議在受影響的環境跑 `uv pip check`（uv 環境）或 `python3 -m pip check`，確認沒有出現不相容的警告。
+> **`fix --yes` 會真的升級、搬移或移除套件。** Python 套件會升到「最低的安全版本」（`==`），不會一路升到最新版。升級前後各跑一次 `pip check`（uv 環境用 `uv pip check`），如果升級讓其他套件的版本限制不成立，會自動還原為原本的版本，並列出是哪個套件的限制。每次修復的前後版本都記錄在 `~/Library/Application Support/DevKeeper/fix-history.jsonl`（Linux 為 `~/.local/share/DevKeeper/`）。
 
-需要自動化時加上 `--json`；稽核專案目錄用 `--projects 路徑`（也可用環境變數 `DEVKEEPER_PROJECTS`）。直接升級會立刻執行；搬移或移除這類替代修復，不加 `--yes` 時只會列出計畫就結束（結束代碼 2），加上 `--yes` 才會執行。
+需要自動化時加上 `--json`；稽核專案目錄用 `--projects 路徑`（也可用環境變數 `DEVKEEPER_PROJECTS`）。不加 `--yes` 時只會列出計畫就結束（結束代碼 2；`--dry-run` 同樣只預覽，結束代碼 0），加上 `--yes` 才會執行升級、搬移或移除。
 
 ### 網頁介面
 
@@ -187,7 +187,7 @@ SwiftUI 應用程式只能在 macOS 執行。Linux 與其他環境使用 `devkee
 | `scan` | 待升級套件總覽（Python、npm、pip、系統套件） |
 | `python list` | 列出偵測到的 Python 與支援狀態 |
 | `audit` | 安全弱點稽核，發現弱點時結束代碼為 1 |
-| `fix` | 修復弱點；`--dry-run` 只顯示會執行的指令，`--yes` 直接執行替代修復 |
+| `fix` | 修復弱點；不加 `--yes` 只預覽，加上 `--yes` 才執行 |
 | `serve` | 啟動本機網頁介面 |
 | `version` | 顯示版本 |
 

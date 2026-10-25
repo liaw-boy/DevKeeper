@@ -74,8 +74,8 @@ func usage() {
 
     選項：
       --json          以 JSON 輸出（scan、python list、audit）
-      --yes, -y       fix：直接執行替代修復（搬移或移除套件），不再詢問
-      --dry-run       fix：只顯示會執行的指令，不實際執行
+      --yes, -y       fix：確認執行（升級、搬移或移除套件）；沒加時只預覽
+      --dry-run       fix：只預覽會執行的指令（與不加 --yes 相同，結束代碼為 0）
       --all           audit：連內建例外（系統 Python 附的 pip、setuptools、wheel）也顯示
       --port 埠號      serve：監聽的連接埠（預設 8765，0 = 自動挑選）
       --projects 路徑  稽核該資料夾底下專案的 package.json 與 requirements.txt
@@ -180,6 +180,8 @@ func commandFix() async -> Int32 {
     guard !result.groups.isEmpty else { print(green("沒有需要修復的項目。")); return 0 }
     
     let noopSink: LogSink = { _ in }
+    // Nothing is changed without --yes: upgrades can break other packages, so the plan is shown first.
+    let preview = options.dryRun || !options.yes
     var failed: [(group: PackageVulnerabilityGroup, env: PythonEnvironmentRef?, reason: String)] = []
     var fixedCount = 0
     
@@ -190,8 +192,8 @@ func commandFix() async -> Int32 {
                 failed.append((group, target.environment, "這個環境無法自動修復"))
                 continue
             }
-            if options.dryRun {
-                print("[dry-run] \(group.packageName)（\(place)）：\(target.command)")
+            if preview {
+                print("[預覽] \(group.packageName)（\(place)）：\(target.command)")
                 continue
             }
             print("修復 \(bold(group.packageName))（\(place)）…")
@@ -210,8 +212,13 @@ func commandFix() async -> Int32 {
             }
         }
     }
-    if options.dryRun { return 0 }
+    if preview {
+        print(dim("\n升級後若讓其他套件的版本限制不成立，會自動還原為原本的版本。直接升級失敗時，可能會再提出搬移或移除的替代做法。"))
+        if !options.dryRun { print(dim("確認後加上 --yes 執行：devkeeper-cli fix --yes")) }
+        return options.dryRun ? 0 : 2
+    }
     print(bold("\n直接升級：成功 \(fixedCount) 項，失敗 \(failed.count) 項"))
+    if let url = FixHistory.defaultURL { print(dim("升級前後的版本已記錄在 \(url.path)")) }
     guard !failed.isEmpty else { return 0 }
     
     // Alternative fixes for what could not be upgraded in place.
