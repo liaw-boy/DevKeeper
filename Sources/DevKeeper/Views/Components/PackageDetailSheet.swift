@@ -8,6 +8,8 @@ public struct PackageDetailSheet: View {
     
     @State private var isFetchingDetails = false
     @State private var detailedNotes: String = ""
+    @State private var notesTitle: String?
+    @State private var notesURL: String?
     @State private var showConfirmUninstall = false
     @State private var copiedCommandInSheet = false
     
@@ -177,14 +179,26 @@ public struct PackageDetailSheet: View {
                         
                         VStack(alignment: .leading, spacing: 6) {
                             if !detailedNotes.isEmpty {
+                                if let title = notesTitle {
+                                    Text(title)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                }
                                 Text(detailedNotes)
                                     .font(.system(size: 12, design: .monospaced))
                                     .foregroundColor(.secondary)
                                     .lineSpacing(3)
+                                    .textSelection(.enabled)
+                                if let url = InputValidator.httpsURL(notesURL, allowedHosts: ["github.com"]) {
+                                    Link("在 GitHub 查看完整發布說明", destination: url)
+                                        .font(.system(size: 11.5))
+                                }
+                            } else if isFetchingDetails {
+                                Text("正在取得發布說明...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
                             } else {
-                                Text(package.status.isOutdated ?
-                                     "此版本包含功能改進、錯誤修復與效能優化。點擊下方更新按鈕可直接升級至最新版本。" :
-                                     "目前已是最新穩定版本，無需升級。")
+                                Text(notesUnavailableMessage)
                                     .font(.system(size: 12))
                                     .foregroundColor(.secondary)
                             }
@@ -280,6 +294,7 @@ public struct PackageDetailSheet: View {
         }
         .frame(width: 540, height: 480)
         .background(Theme.canvasBackground)
+        .task { await loadReleaseNotes() }
         .confirmationDialog(
             "確定要乾淨移除 \(package.name) 嗎？",
             isPresented: $showConfirmUninstall,
@@ -291,6 +306,28 @@ public struct PackageDetailSheet: View {
             }
             Button("取消", role: .cancel) {}
         }
+    }
+    
+    private var notesVersion: String {
+        package.status.isOutdated ? (package.latestVersion ?? package.currentVersion) : package.currentVersion
+    }
+    
+    private var notesUnavailableMessage: String {
+        GitHubReleaseService.githubRepo(from: package.homepage) == nil
+            ? "此套件的官網不是 GitHub，無法自動取得發布說明，請至官方網站查看。"
+            : "在 GitHub 上找不到 \(notesVersion) 版本對應的發布說明。"
+    }
+    
+    private func loadReleaseNotes() async {
+        guard let repo = GitHubReleaseService.githubRepo(from: package.homepage) else { return }
+        isFetchingDetails = true
+        defer { isFetchingDetails = false }
+        guard let release = await GitHubReleaseService.shared.fetchReleaseNotes(owner: repo.owner, repo: repo.repo, version: notesVersion),
+              let body = release.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty else { return }
+        let limit = 3000
+        detailedNotes = body.count > limit ? String(body.prefix(limit)) + "\n…" : body
+        notesTitle = release.name?.isEmpty == false ? release.name : release.tagName
+        notesURL = release.htmlUrl
     }
     
     private var iconTint: Color {
