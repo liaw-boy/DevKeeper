@@ -30,7 +30,9 @@ struct DevKeeperApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1240, height: 820)
         .commands {
-            SidebarCommands()
+            // One main window only: every window would share the same view model and sheets.
+            // (A single `Window` scene is not used because closing it would quit the app and the menu bar item.)
+            CommandGroup(replacing: .newItem) {}
         }
     }
 }
