@@ -65,7 +65,7 @@ public final class PythonService: Sendable {
         
         var request = URLRequest(url: url)
         request.timeoutInterval = 4.0
-        request.setValue("DevKeeper/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("DevKeeper/\(DevKeeperInfo.version)", forHTTPHeaderField: "User-Agent")
         
         do {
             let (data, response) = try await URLSession.shared.devkeeperData(for: request)
