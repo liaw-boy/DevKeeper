@@ -23,3 +23,7 @@ Detailed architecture notes (in Traditional Chinese) live in `CLAUDE.md`; read i
 - Verify fixes by checking the installed version, not the exit status.
 - For uv tool environments, upgrade a single package with `uv pip install --python`, not `uv tool upgrade`.
 - UI text is Traditional Chinese. No emoji; use SF Symbols only.
+
+## UI
+- Follow `DESIGN.md`. Use only the `DK` tokens and components in `Sources/DevKeeper/Design/`: no hardcoded colours or font sizes, no native `Menu`/`Picker`/`Toggle`/`confirmationDialog`/`ProgressView`/`.sheet`/`.help`.
+- Check components visually with `DEVKEEPER_GALLERY=1 .build/debug/DevKeeper` (light and dark side by side).
