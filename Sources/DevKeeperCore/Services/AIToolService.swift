@@ -42,7 +42,7 @@ public final class AIToolService: @unchecked Sendable {
                 vendor: "Paul Gauthier",
                 summary: "終端機 AI 協同結對編程工具 (AI Pair Programming)，具備自動 Git Commit 語意分析",
                 iconSymbol: "person.2.badge.gearshape",
-                updateCommand: "pip install -U aider-chat",
+                updateCommand: "pipx upgrade aider-chat || uv tool upgrade aider-chat",
                 installCommand: "pipx install aider-chat",
                 websiteUrl: "https://aider.chat"
             ),
@@ -62,9 +62,9 @@ public final class AIToolService: @unchecked Sendable {
                 vendor: "OpenAI",
                 summary: "OpenAI 程式碼智慧補全與生成指令列工具，支援終端機代碼自動生成、解釋與重構",
                 iconSymbol: "chevron.left.forwardslash.chevron.right",
-                updateCommand: "pip install --upgrade openai",
-                installCommand: "pip install --upgrade openai",
-                websiteUrl: "https://platform.openai.com/docs/guides/code"
+                updateCommand: "npm install -g @openai/codex@latest",
+                installCommand: "npm install -g @openai/codex",
+                websiteUrl: "https://github.com/openai/codex"
             ),
             AIToolItem(
                 name: "LLM CLI (Simon Willison)",
@@ -112,19 +112,6 @@ public final class AIToolService: @unchecked Sendable {
             return (false, "未安裝", nil)
         }
         
-        // Handle special case for codex
-        if cmd == "codex" {
-            if let pathOutput = try? await ShellExecutor.shared.run(command: "which codex 2>/dev/null || which openai 2>/dev/null") {
-                let path = pathOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !path.isEmpty && !path.contains("not found") {
-                    let verOutput = try? await ShellExecutor.shared.run(command: "\(InputValidator.shellQuoted(path)) --version 2>&1")
-                    let ver = extractVersion(from: verOutput ?? "")
-                    return (true, ver.isEmpty ? "已安裝" : ver, path)
-                }
-            }
-            return (false, "未安裝", nil)
-        }
-        
         // General CLI detection via `which <command>`
         do {
             let pathOutput = try await ShellExecutor.shared.run(command: "which \(cmd)")
@@ -133,6 +120,10 @@ public final class AIToolService: @unchecked Sendable {
                 // Try getting version
                 let quoted = InputValidator.shellQuoted(path)
                 let verOutput = try? await ShellExecutor.shared.run(command: "\(quoted) --version 2>&1 || \(quoted) -v 2>&1")
+                // A shim that exists on PATH but cannot find the real tool is not an installation.
+                if verOutput?.lowercased().contains("not found") == true {
+                    return (false, "未安裝", nil)
+                }
                 let ver = extractVersion(from: verOutput ?? "")
                 return (true, ver.isEmpty ? "已安裝" : ver, path)
             }
@@ -153,23 +144,10 @@ public final class AIToolService: @unchecked Sendable {
     public func fetchLatestVersion(for command: String) async -> String? {
         switch command {
         case "claude":
-            // npm registry @anthropic-ai/claude-code
-            guard let url = URL(string: "https://registry.npmjs.org/@anthropic-ai/claude-code/latest") else { return nil }
-            guard let (data, res) = try? await urlSession.devkeeperData(from: url),
-                  let http = res as? HTTPURLResponse, http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let version = json["version"] as? String else { return nil }
-            return version
+            return await npmLatestVersion(of: "@anthropic-ai/claude-code")
             
         case "codex":
-            // PyPI openai package
-            guard let url = URL(string: "https://pypi.org/pypi/openai/json") else { return nil }
-            guard let (data, res) = try? await urlSession.devkeeperData(from: url),
-                  let http = res as? HTTPURLResponse, http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let info = json["info"] as? [String: Any],
-                  let version = info["version"] as? String else { return nil }
-            return version
+            return await npmLatestVersion(of: "@openai/codex")
             
         case "aider":
             // PyPI
@@ -207,6 +185,14 @@ public final class AIToolService: @unchecked Sendable {
         }
     }
     
+    private func npmLatestVersion(of package: String) async -> String? {
+        guard let url = URL(string: "https://registry.npmjs.org/\(package)/latest"),
+              let (data, res) = try? await urlSession.devkeeperData(from: url),
+              let http = res as? HTTPURLResponse, http.statusCode == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["version"] as? String
+    }
+    
     /// Stream the upgrade command
     public func upgradeTool(item: AIToolItem) -> AsyncStream<String> {
         return ShellExecutor.shared.stream(command: item.updateCommand)
@@ -226,6 +212,6 @@ public final class AIToolService: @unchecked Sendable {
                 return ns.substring(with: match.range)
             }
         }
-        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ""
     }
 }
