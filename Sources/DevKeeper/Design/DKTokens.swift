@@ -48,14 +48,18 @@ enum DK {
         static let display = SwiftUI.Font.system(size: 28, weight: .semibold)
     }
     
-    /// Package-source colours, used only for the small source badges.
+    /// Package-source colours, used only for the small source badges: a soft tint of the hue behind text in the
+    /// same hue. No yellow or orange.
     enum Brand {
-        static let npm = (background: Color(light: 0xCB3837, dark: 0xCB3837), text: Color.white)
-        static let python = (background: Color(light: 0x3776AB, dark: 0x3F7DB8), text: Color.white)
-        static let homebrew = (background: Color(light: 0xF2A93B, dark: 0xF2A93B), text: Color(light: 0x3B2700, dark: 0x3B2700))
-        static let cask = (background: Color(light: 0x8C6A3F, dark: 0x9C7A4C), text: Color.white)
-        static let ai = (background: Color(light: 0x5B5BD6, dark: 0x6E6EE0), text: Color.white)
-        static let database = (background: Color(light: 0x3D6A8F, dark: 0x4A7BA3), text: Color.white)
+        private static func tint(light: UInt32, dark: UInt32) -> (background: Color, text: Color) {
+            (Color(light: light, dark: dark, lightAlpha: 0.14, darkAlpha: 0.22), Color(light: light, dark: dark))
+        }
+        static let npm = tint(light: 0xB83A3A, dark: 0xE87D7D)
+        static let python = tint(light: 0x3A6EA5, dark: 0x7FB0E0)
+        static let homebrew = tint(light: 0x2F7D6B, dark: 0x6CC9B2)
+        static let cask = tint(light: 0x6F6A66, dark: 0xB5AEA8)
+        static let ai = tint(light: 0x5B5BD6, dark: 0xA3A3F5)
+        static let database = tint(light: 0x8A4FA0, dark: 0xCB9BE0)
     }
     
     // MARK: Layout
