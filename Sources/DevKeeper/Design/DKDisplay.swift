@@ -12,6 +12,7 @@ extension View {
             .background(
                 RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)
                     .fill(DK.surface)
+                    .shadow(color: DK.shadowSoft, radius: 3, x: 0, y: 1)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)
@@ -425,5 +426,213 @@ struct DKSettingRow<Control: View>: View {
                 .fixedSize()
         }
         .padding(.vertical, DK.Space.m)
+    }
+}
+
+// MARK: - Visual accents
+
+/// A monochrome SF Symbol on a neutral tile.
+struct DKIconTile: View {
+    let systemName: String
+    var size: CGFloat = 28
+    var tint: Color = DK.textSecondary
+    
+    init(_ systemName: String, size: CGFloat = 28, tint: Color = DK.textSecondary) {
+        self.systemName = systemName
+        self.size = size
+        self.tint = tint
+    }
+    
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size * 0.46, weight: .medium))
+            .foregroundColor(tint)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
+                    .fill(DK.surfaceHover)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
+                    .stroke(DK.border, lineWidth: 1)
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+/// Where a package comes from.
+enum DKSource {
+    case npm, python, homebrew, cask, ai, database
+    
+    init(_ type: PackageType) {
+        switch type {
+        case .npm: self = .npm
+        case .python: self = .python
+        case .brewFormula: self = .homebrew
+        case .brewCask: self = .cask
+        case .database: self = .database
+        }
+    }
+    
+    var label: String {
+        switch self {
+        case .npm: return "npm"
+        case .python: return "Py"
+        case .homebrew: return "brew"
+        case .cask: return "app"
+        case .ai: return "AI"
+        case .database: return "DB"
+        }
+    }
+    
+    var name: String {
+        switch self {
+        case .npm: return "npm"
+        case .python: return "Python"
+        case .homebrew: return "Homebrew"
+        case .cask: return "Homebrew 應用程式"
+        case .ai: return "AI 工具"
+        case .database: return "資料庫"
+        }
+    }
+    
+    fileprivate var colors: (background: Color, text: Color) {
+        switch self {
+        case .npm: return DK.Brand.npm
+        case .python: return DK.Brand.python
+        case .homebrew: return DK.Brand.homebrew
+        case .cask: return DK.Brand.cask
+        case .ai: return DK.Brand.ai
+        case .database: return DK.Brand.database
+        }
+    }
+}
+
+/// A brand-coloured monogram that identifies a package source (not the vendor's logo artwork).
+struct DKSourceBadge: View {
+    let source: DKSource
+    var size: CGFloat = 28
+    
+    init(_ source: DKSource, size: CGFloat = 28) {
+        self.source = source
+        self.size = size
+    }
+    
+    var body: some View {
+        Text(source.label)
+            .font(.system(size: max(size * 0.36, 8), weight: .bold, design: .rounded))
+            .foregroundColor(source.colors.text)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: size >= 24 ? DK.Radius.control : DK.Radius.inner, style: .continuous)
+                    .fill(source.colors.background)
+            )
+            .accessibilityLabel(source.name)
+    }
+}
+
+/// Thin proportion bar, e.g. outdated / total.
+struct DKBar: View {
+    let value: Double
+    var tint: Color = DK.accent
+    var height: CGFloat = 4
+    
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(DK.border)
+                Capsule()
+                    .fill(tint)
+                    .frame(width: value > 0 ? max(proxy.size.width * CGFloat(min(value, 1)), height) : 0)
+            }
+        }
+        .frame(height: height)
+        .accessibilityValue("\(Int((min(max(value, 0), 1)) * 100))%")
+    }
+}
+
+/// Stacked bar showing how a total splits into parts (e.g. vulnerabilities by severity).
+struct DKSegmentBar: View {
+    let segments: [(value: Double, color: Color)]
+    var height: CGFloat = 6
+    
+    var body: some View {
+        let total = segments.reduce(0) { $0 + $1.value }
+        GeometryReader { proxy in
+            HStack(spacing: 2) {
+                if total <= 0 {
+                    Capsule().fill(DK.border)
+                } else {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                        if segment.value > 0 {
+                            Capsule()
+                                .fill(segment.color)
+                                .frame(width: max((proxy.size.width - CGFloat(segments.count - 1) * 2) * CGFloat(segment.value / total), height))
+                        }
+                    }
+                }
+            }
+        }
+        .frame(height: height)
+    }
+}
+
+/// Large number with a label, an optional icon and an optional proportion bar.
+struct DKMetricCard: View {
+    let title: String
+    let value: String
+    var caption: String?
+    var systemImage: String?
+    var source: DKSource?
+    var barValue: Double?
+    var valueColor: Color = DK.textPrimary
+    var action: (() -> Void)?
+    @State private var isHovering = false
+    
+    var body: some View {
+        let content = VStack(alignment: .leading, spacing: DK.Space.s) {
+            HStack(spacing: DK.Space.s) {
+                if let source {
+                    DKSourceBadge(source, size: 22)
+                } else if let systemImage {
+                    DKIconTile(systemImage, size: 22)
+                }
+                Text(title)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            Text(value)
+                .font(DK.Font.display)
+                .monospacedDigit()
+                .foregroundColor(valueColor)
+                .lineLimit(1)
+            if let caption {
+                Text(caption)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textTertiary)
+                    .lineLimit(1)
+            }
+            if let barValue {
+                DKBar(value: barValue)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dkCard()
+        .overlay(
+            RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)
+                .stroke(isHovering ? DK.textTertiary.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
+        
+        if let action {
+            Button(action: action) { content.contentShape(Rectangle()) }
+                .buttonStyle(DKPressStyle())
+                .onHover { isHovering = $0 }
+        } else {
+            content
+        }
     }
 }

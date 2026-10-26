@@ -16,6 +16,7 @@ struct DKButton: View {
     enum Kind { case primary, secondary, danger, ghost }
     
     let title: String
+    var systemImage: String?
     var kind: Kind = .secondary
     var isLoading = false
     /// Shown as a tooltip when the button is disabled, so it is clear why nothing happens.
@@ -25,8 +26,10 @@ struct DKButton: View {
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
     
-    init(_ title: String, kind: Kind = .secondary, isLoading: Bool = false, disabledReason: String? = nil, action: @escaping () -> Void) {
+    init(_ title: String, systemImage: String? = nil, kind: Kind = .secondary, isLoading: Bool = false,
+         disabledReason: String? = nil, action: @escaping () -> Void) {
         self.title = title
+        self.systemImage = systemImage
         self.kind = kind
         self.isLoading = isLoading
         self.disabledReason = disabledReason
@@ -38,6 +41,9 @@ struct DKButton: View {
             HStack(spacing: DK.Space.tight) {
                 if isLoading {
                     DKSpinner(size: 12, color: foreground)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: DK.Icon.small, weight: .semibold))
                 }
                 Text(title)
                     .font(DK.Font.bodyMedium)
@@ -66,7 +72,7 @@ struct DKButton: View {
     
     private var foreground: Color {
         switch kind {
-        case .primary: return DK.inverseText
+        case .primary: return DK.onAccent
         case .secondary, .ghost: return DK.textPrimary
         case .danger: return DK.danger
         }
@@ -74,7 +80,7 @@ struct DKButton: View {
     
     private var background: Color {
         switch kind {
-        case .primary: return DK.inverseBackground.opacity(isHovering ? 0.88 : 1)
+        case .primary: return DK.accent.opacity(isHovering ? 0.88 : 1)
         case .secondary, .danger: return isHovering ? DK.surfaceHover : DK.surface
         case .ghost: return isHovering ? DK.surfaceHover : .clear
         }
@@ -156,7 +162,7 @@ struct DKProgressBar: View {
                 Rectangle().fill(DK.border)
                 if let value {
                     Rectangle()
-                        .fill(DK.textPrimary)
+                        .fill(DK.accent)
                         .frame(width: proxy.size.width * CGFloat(min(max(value, 0), 1)))
                 } else {
                     DKIndeterminateSegment(trackWidth: proxy.size.width)
@@ -175,7 +181,7 @@ private struct DKIndeterminateSegment: View {
     
     var body: some View {
         Rectangle()
-            .fill(DK.textPrimary)
+            .fill(DK.accent)
             .frame(width: trackWidth * 0.3)
             .offset(x: trackWidth * 1.3 * phase - trackWidth * 0.3)
             .onAppear {
@@ -197,10 +203,10 @@ struct DKSwitch: View {
         } label: {
             ZStack(alignment: isOn ? .trailing : .leading) {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isOn ? DK.inverseBackground : DK.controlTrack)
+                    .fill(isOn ? DK.accent : DK.controlTrack)
                     .frame(width: 32, height: 18)
                 Circle()
-                    .fill(isOn ? DK.inverseText : DK.controlKnob)
+                    .fill(isOn ? Color.white : DK.controlKnob)
                     .frame(width: 14, height: 14)
                     .padding(2)
             }
@@ -236,7 +242,8 @@ struct DKSegmented<Value: Hashable>: View {
                         .frame(height: DK.controlHeight - 6)
                         .background(
                             RoundedRectangle(cornerRadius: DK.Radius.inner, style: .continuous)
-                                .fill(selected ? DK.surfaceHover : Color.clear)
+                                .fill(selected ? DK.surface : Color.clear)
+                                .shadow(color: selected ? DK.shadowSoft : .clear, radius: 1.5, x: 0, y: 1)
                         )
                         .contentShape(Rectangle())
                 }
@@ -247,7 +254,7 @@ struct DKSegmented<Value: Hashable>: View {
         .frame(height: DK.controlHeight)
         .background(
             RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
-                .fill(DK.surface)
+                .fill(DK.surfaceSunken)
         )
         .overlay(
             RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
@@ -346,7 +353,7 @@ struct DKMenuRow: View {
                 if checked {
                     Image(systemName: "checkmark")
                         .font(.system(size: DK.Icon.small, weight: .semibold))
-                        .foregroundColor(DK.textSecondary)
+                        .foregroundColor(DK.accent)
                 }
             }
             .padding(.horizontal, DK.Space.s)
@@ -442,7 +449,7 @@ struct DKTextField: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
-                .stroke(focused ? DK.textSecondary : DK.border, lineWidth: 1)
+                .stroke(focused ? DK.accent : DK.border, lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture { focused = true }

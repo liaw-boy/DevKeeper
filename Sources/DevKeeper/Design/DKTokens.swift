@@ -6,15 +6,24 @@ enum DK {
     // MARK: Colour (each token has a light and a dark value)
     
     static let background = Color(light: 0xFAFAF9, dark: 0x161618)
+    /// Sidebar and inset tracks: one step darker (light) or deeper (dark) than the background.
+    static let surfaceSunken = Color(light: 0xF2F2F0, dark: 0x111113)
     static let surface = Color(light: 0xFFFFFF, dark: 0x1E1E21)
     static let surfaceHover = Color(light: 0xF2F2F0, dark: 0x26262A)
     static let border = Color(light: 0xE4E4E0, dark: 0x2E2E32)
     static let textPrimary = Color(light: 0x1A1A19, dark: 0xEDEDEC)
     static let textSecondary = Color(light: 0x6B6B68, dark: 0xA1A1A0)
     static let textTertiary = Color(light: 0x9C9C98, dark: 0x6E6E6C)
-    /// Primary buttons are drawn inverted: text colour as background.
+    /// The single accent: primary buttons, selection, bars, links and focus.
+    static let accent = Color(light: 0x3B6FD8, dark: 0x7AA2F7)
+    /// Text and icons drawn on top of `accent`.
+    static let onAccent = Color(light: 0xFFFFFF, dark: 0x0F1A33)
+    /// Selected rows and highlights.
+    static let accentSubtle = Color(light: 0xE8EFFC, dark: 0x1E2A44)
     static let inverseBackground = textPrimary
     static let inverseText = Color(light: 0xFFFFFF, dark: 0x161618)
+    /// Very soft depth under cards; floating panels use a stronger one.
+    static let shadowSoft = Color(light: 0x000000, dark: 0x000000, lightAlpha: 0.05, darkAlpha: 0.35)
     /// State colours are used for text only, never as fills.
     static let danger = Color(light: 0xC62828, dark: 0xF07A7A)
     static let warning = Color(light: 0x9A5B00, dark: 0xE8B04B)
@@ -35,6 +44,18 @@ enum DK {
         static let caption = SwiftUI.Font.system(size: 12)
         static let micro = SwiftUI.Font.system(size: 11, weight: .medium)
         static let mono = SwiftUI.Font.system(size: 12, design: .monospaced)
+        /// Large numbers on overview and summary cards.
+        static let display = SwiftUI.Font.system(size: 28, weight: .semibold)
+    }
+    
+    /// Package-source colours, used only for the small source badges.
+    enum Brand {
+        static let npm = (background: Color(light: 0xCB3837, dark: 0xCB3837), text: Color.white)
+        static let python = (background: Color(light: 0x3776AB, dark: 0x3F7DB8), text: Color.white)
+        static let homebrew = (background: Color(light: 0xF2A93B, dark: 0xF2A93B), text: Color(light: 0x3B2700, dark: 0x3B2700))
+        static let cask = (background: Color(light: 0x8C6A3F, dark: 0x9C7A4C), text: Color.white)
+        static let ai = (background: Color(light: 0x5B5BD6, dark: 0x6E6EE0), text: Color.white)
+        static let database = (background: Color(light: 0x3D6A8F, dark: 0x4A7BA3), text: Color.white)
     }
     
     // MARK: Layout
@@ -75,10 +96,10 @@ enum DK {
 
 extension Color {
     /// A colour that follows the effective appearance (light or dark).
-    init(light: UInt32, dark: UInt32) {
+    init(light: UInt32, dark: UInt32, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) {
         self.init(nsColor: NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return NSColor(hex: isDark ? dark : light)
+            return NSColor(hex: isDark ? dark : light).withAlphaComponent(isDark ? darkAlpha : lightAlpha)
         })
     }
 }
