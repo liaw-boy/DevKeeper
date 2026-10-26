@@ -40,13 +40,13 @@
 | 版本、指令、路徑 | `DK.Font.mono` | 12 等寬 |
 | 卡片大數字 | `DK.Font.display` | 28 semibold |
 
-- 例外：`DKSourceBadge` 的縮寫用 bold 圓體，大小隨標章尺寸縮放；它是品牌色標章，不是文字。
+- 來源色（`DK.Brand`）是同一色相的柔和底色（淺色 14%、深色 22% 透明度）加同色圖示，不用黃或橘；只用在 `DKSourceBadge` 與 `DKPackageAvatar`。
 
 - 間距只用 `DK.Space`：元素之間用 4、8、12、16、24、32；2、6、10（`xxs`、`tight`、`snug`）只用在控制項內部的留白。頁面左右留白一律 `DK.pagePadding`（24），標題與內容對齊。
 - 圓角：控制項 `DK.Radius.control`（6），卡片與面板 `DK.Radius.card`（10），控制項內的巢狀元素（分段選取底色、選單列）`DK.Radius.inner`（4）。標籤、徽章不用膠囊形；開關軌道是唯一的圓端外形。
 - 控制項高度 `DK.controlHeight`（28），清單列內的小按鈕 `DK.compactControlHeight`（24）。
 - 邊線一律 1pt。卡片有極淡陰影（`DK.shadowSoft`），浮層（下拉面板、提示、對話面板）有較明顯的陰影。
-- 圖示：SF Symbols、單色、次要文字色；大小用 `DK.Icon`：一般 13、勾選與欄位內圖示 11、箭頭與清除鈕 9。只用在側邊欄、純圖示按鈕和必須靠圖示表意的狀態。標題、卡片標題不放圖示。文字按鈕可用 `DKButton(systemImage:)` 帶圖示；`DKMetricCard` 的標題旁可放 `DKIconTile` 或來源標章。
+- 圖示：SF Symbols；大小用 `DK.Icon`：一般 13、勾選與欄位內圖示 11、箭頭與清除鈕 9。側邊欄、卡片與套件列的圖示方塊用來源色（`DKSourceBadge`、`DKPackageAvatar`），其餘圖示維持單色、次要文字色。頁面標題、卡片標題不放圖示。文字按鈕可用 `DKButton(systemImage:)` 帶圖示。
 - 動態：按下只降透明度（`DKPressStyle`），滑過換底色；過場 0.12 秒淡入淡出。不用彈跳、縮放、位移動畫。
 
 ## 元件
@@ -65,9 +65,10 @@
 | `DKStatusText` | 套件升級狀態，純文字 |
 | `.dkCard()`、`DKDivider` | 唯一的卡片樣式與分隔線 |
 | `DKIconTile` | 中性底色的單色圖示方塊 |
-| `DKSourceBadge` | 套件來源（npm、Python、Homebrew、App、AI、資料庫）的品牌色縮寫標章，不使用官方商標圖 |
+| `DKSourceBadge` | 套件來源（npm、Python、Homebrew、App、AI、資料庫）的柔和來源色圖示方塊，圖示由 `DKSource.symbol` 決定，不使用官方商標圖 |
+| `DKPackageAvatar` | 單一套件的圖示：依名稱關鍵字選 SF Symbol（資料庫、鎖盾、終端機等），沒有對應時用來源預設圖示；底色與來源標章相同 |
 | `DKBar`、`DKSegmentBar` | 比例條（例如可升級／全部）與分段條（弱點依嚴重度） |
-| `DKMetricCard` | 大數字卡片：標題、數字、說明、可選比例條，可整張點擊 |
+| `DKMetricCard` | 緊湊的數據卡片：來源圖示、標題、數字與說明同一排，可選比例條；內容垂直置中，同排的卡片等高；窄卡片用 `captionBelow` 並讓說明單行 |
 | `DKPageHeader`、`DKSectionTitle` | 頁面標題列與區塊標題 |
 | `DKEmptyState` | 載入中、尚未檢查、沒有資料、全部最新、發生錯誤 |
 | `DKCommandBlock` | 指令：等寬、可選取、可複製 |
@@ -76,6 +77,14 @@
 | `DKSettingRow` | 設定列 |
 
 浮層（下拉面板、提示、對話面板）由 `DKOverlayHost` 統一繪製。每個視窗或面板的根畫面都要包一層 `DKOverlayHost`；元件透過 `@Environment(\.dkOverlay)` 取得，找不到時不會閃退，只是不顯示浮層。
+
+## 頁面結構
+
+- 側邊欄：頂部品牌區（強調色圖示方塊、名稱、待升級數量）；套件頁用來源色圖示方塊，其餘為單色圖示；數量用圓角小標籤，安全弱點只有大於 0 時才變紅。
+- 清單頁（npm、Python、Homebrew）共用 `PackageListPage`：標題列、搜尋與篩選、`PackageRow` 清單。Homebrew 預設隱藏只因相依才安裝的套件，有待升級的仍會顯示。
+- 詳細頁、安裝面板、批次修復確認都用 `DKModalPanel`，由 `overlay?.present` 開啟；不使用系統 sheet 或 `confirmationDialog`。
+- 淺色與深色只透過 `DK` token 與 `Color.dkWash(_:)` 切換；不要寫死 `Color(red:)`、`.white`、`.black` 當背景。主控台輸出區用 `DK.surfaceSunken`。
+- App 圖示（`scripts/generate_icon.swift`）是強調藍的圓角方塊加白色 `shippingbox.fill`，與側邊欄品牌區一致。
 
 ## 文案
 
