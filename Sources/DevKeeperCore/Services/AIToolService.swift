@@ -67,6 +67,16 @@ public final class AIToolService: @unchecked Sendable {
                 websiteUrl: "https://github.com/openai/codex"
             ),
             AIToolItem(
+                name: "OpenCode",
+                command: "opencode",
+                vendor: "Anomaly",
+                summary: "開源終端機 AI 程式開發助理，支援多家模型供應商與自訂代理人",
+                iconSymbol: "curlybraces",
+                updateCommand: "npm install -g opencode-ai@latest",
+                installCommand: "npm install -g opencode-ai",
+                websiteUrl: "https://github.com/anomalyco/opencode"
+            ),
+            AIToolItem(
                 name: "LLM CLI (Simon Willison)",
                 command: "llm",
                 vendor: "Simon Willison",
@@ -149,6 +159,9 @@ public final class AIToolService: @unchecked Sendable {
         case "codex":
             return await npmLatestVersion(of: "@openai/codex")
             
+        case "opencode":
+            return await npmLatestVersion(of: "opencode-ai")
+            
         case "aider":
             // PyPI
             guard let url = URL(string: "https://pypi.org/pypi/aider-chat/json") else { return nil }
@@ -203,15 +216,19 @@ public final class AIToolService: @unchecked Sendable {
         return ShellExecutor.shared.stream(command: item.installCommand)
     }
     
-    private func extractVersion(from raw: String) -> String {
-        // Find pattern like 2.1.309 or 1.4.5 or 0.86.2
-        let pattern = #"\b([0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?)\b"#
+    /// First version-looking token, e.g. `2.1.309` from `claude 2.1.309 (Claude Code)` or `2.1.4` from `opencode v2.1.4`.
+    static func extractVersion(from raw: String) -> String {
+        let pattern = #"(?<![0-9.])v?([0-9]+\.[0-9]+(\.[0-9]+)?(-[a-zA-Z0-9.]+)?)"#
         if let regex = try? NSRegularExpression(pattern: pattern) {
             let ns = raw as NSString
             if let match = regex.firstMatch(in: raw, range: NSRange(location: 0, length: ns.length)) {
-                return ns.substring(with: match.range)
+                return ns.substring(with: match.range(at: 1))
             }
         }
         return ""
+    }
+    
+    private func extractVersion(from raw: String) -> String {
+        Self.extractVersion(from: raw)
     }
 }

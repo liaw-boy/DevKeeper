@@ -23,7 +23,8 @@ public struct AIToolsView: View {
     private var filteredTools: [AIToolItem] {
         switch filterMode {
         case .all:
-            return viewModel.aiTools
+            // Installed tools first; each group keeps its original order.
+            return viewModel.aiTools.filter { $0.isInstalled } + viewModel.aiTools.filter { !$0.isInstalled }
         case .installed:
             return viewModel.aiTools.filter { $0.isInstalled }
         case .outdated:
