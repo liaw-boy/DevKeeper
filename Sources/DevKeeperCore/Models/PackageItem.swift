@@ -82,6 +82,8 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
     public var homepage: String?
     public var isUpdating: Bool = false
     public var isUninstalling: Bool = false
+    /// Homebrew formulae installed only because another package needs them.
+    public var isDependencyOnly: Bool = false
     
     public init(
         name: String,
@@ -115,6 +117,23 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
             return "\(PythonRuntime.executable) -m pip install --upgrade \(name)"
         case .database:
             return "brew upgrade \(name) && brew services restart \(name)"
+        }
+    }
+    
+    /// Exact commands run when this package is removed; listed in the confirmation panel.
+    public var uninstallCommands: [String] {
+        guard InputValidator.isValidPackageName(name) else { return [] }
+        switch type {
+        case .npm:
+            return ["npm uninstall -g \(name)"]
+        case .python:
+            return ["\(PythonRuntime.executable) -m pip uninstall -y \(name)"]
+        case .brewFormula:
+            return ["brew uninstall \(name)", "brew autoremove"]
+        case .brewCask:
+            return ["brew uninstall --zap --cask \(name)"]
+        case .database:
+            return ["brew services stop \(name)", "brew uninstall \(name)", "brew autoremove"]
         }
     }
     

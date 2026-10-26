@@ -81,7 +81,8 @@ func usage() {
       --projects 路徑  稽核該資料夾底下專案的 package.json 與 requirements.txt
                       （也可用環境變數 DEVKEEPER_PROJECTS）
 
-    結束代碼：0 = 沒有待處理項目；1 = audit 發現弱點；2 = fix 後仍有無法修復的項目
+    結束代碼：0 = 沒有待處理項目；1 = audit 發現弱點；2 = fix 後仍有無法修復的項目；
+    3 = 稽核查詢失敗，結果不完整（audit、fix）
     """)
 }
 
@@ -137,7 +138,7 @@ func commandScan() async -> Int32 {
     return 0
 }
 
-func auditGroups(_ env: DetectedEnvironment) async -> (groups: [PackageVulnerabilityGroup], hidden: Int) {
+func auditGroups(_ env: DetectedEnvironment) async -> (groups: [PackageVulnerabilityGroup], hidden: Int, failed: Int) {
     await ReportBuilder.auditGroups(env, projectsRoot: options.projects, showAll: options.showAll)
 }
 
@@ -154,9 +155,15 @@ func severityText(_ s: VulnerabilitySeverity) -> String {
 func commandAudit() async -> Int32 {
     let env = await loadEnvironment()
     let result = await auditGroups(env)
+    let incompleteNote = "有 \(result.failed) 個套件查詢 OSV 失敗，結果不完整，請確認網路後重試。"
     if options.json {
         printJSON(ReportBuilder.auditItems(result.groups))
-        return result.groups.isEmpty ? 0 : 1
+        if result.failed > 0 { FileHandle.standardError.write(Data((incompleteNote + "\n").utf8)) }
+        return result.groups.isEmpty ? (result.failed > 0 ? 3 : 0) : 1
+    }
+    if result.groups.isEmpty && result.failed > 0 {
+        print(yellow("無法確認是否有弱點。") + incompleteNote)
+        return 3
     }
     if result.groups.isEmpty {
         print(green("沒有發現需要處理的已知安全弱點。") + (result.hidden > 0 ? dim("（已隱藏 \(result.hidden) 項內建例外，--all 可顯示）") : ""))
@@ -171,13 +178,21 @@ func commandAudit() async -> Int32 {
         print("    " + g.cveList.prefix(3).joined(separator: "、") + (g.cveList.count > 3 ? " 等 \(g.cveList.count) 個" : ""))
     }
     if result.hidden > 0 { print(dim("\n已隱藏 \(result.hidden) 項內建例外（--all 可顯示）")) }
+    if result.failed > 0 { print(yellow("\n注意：") + incompleteNote) }
     return 1
 }
 
 func commandFix() async -> Int32 {
     let env = await loadEnvironment()
     let result = await auditGroups(env)
-    guard !result.groups.isEmpty else { print(green("沒有需要修復的項目。")); return 0 }
+    guard !result.groups.isEmpty else {
+        if result.failed > 0 {
+            print(yellow("無法確認是否有弱點：") + "有 \(result.failed) 個套件查詢 OSV 失敗，請確認網路後重試。")
+            return 3
+        }
+        print(green("沒有需要修復的項目。"))
+        return 0
+    }
     
     let noopSink: LogSink = { _ in }
     // Nothing is changed without --yes: upgrades can break other packages, so the plan is shown first.

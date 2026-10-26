@@ -136,7 +136,8 @@ enum WebUI {
         status("稽核中，可能需要一點時間…");
         api("/api/audit" + (showAll ? "?all=1" : "")).then(function (d) {
           view.replaceChildren();
-          header(d.items.length ? d.items.length + " 個套件存在弱點" : "沒有發現需要處理的已知安全弱點", audit);
+          var clean = d.failedLookups > 0 ? "稽核不完整：" + d.failedLookups + " 個套件查詢失敗，請確認網路後重試" : "沒有發現需要處理的已知安全弱點";
+          header(d.items.length ? d.items.length + " 個套件存在弱點" : clean, audit);
           if (d.hiddenCount > 0 || showAll) {
             var toggle = el("button", "btn", showAll ? "隱藏內建例外" : "顯示 " + d.hiddenCount + " 項內建例外");
             toggle.addEventListener("click", function () { showAll = !showAll; audit(); });

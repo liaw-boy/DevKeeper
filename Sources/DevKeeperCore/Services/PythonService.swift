@@ -58,32 +58,71 @@ public final class PythonService: Sendable {
         return packages.sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
     
-    public func checkLatestVersion(for packageName: String) async -> (latestVersion: String?, description: String?, homepage: String?) {
-        guard let url = URL(string: "https://pypi.org/pypi/\(packageName)/json") else {
-            return (nil, nil, nil)
+    /// Fields shown for a package, read from its PyPI page.
+    public struct PyPIInfo: Codable, Equatable, Sendable {
+        public var version: String?
+        public var summary: String?
+        public var homepage: String?
+    }
+    
+    /// Reads `info` from a PyPI JSON response. Text comes from a third party, so it is trimmed and capped, and
+    /// only https links are kept.
+    public static func parsePyPIInfo(_ data: Data) -> PyPIInfo? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let info = json["info"] as? [String: Any] else { return nil }
+        func text(_ value: Any?, limit: Int) -> String? {
+            guard let raw = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return String(raw.prefix(limit))
         }
-        
+        func link(_ value: Any?) -> String? {
+            guard let raw = text(value, limit: 300), let url = URL(string: raw), url.scheme == "https" else { return nil }
+            return raw
+        }
+        var homepage: String?
+        if let urls = info["project_urls"] as? [String: Any] {
+            for key in ["Homepage", "Home", "Source", "Source Code", "Repository", "GitHub"] {
+                if let found = link(urls[key]) { homepage = found; break }
+            }
+        }
+        homepage = homepage ?? link(info["home_page"]) ?? link(info["project_url"])
+        return PyPIInfo(version: text(info["version"], limit: 64), summary: text(info["summary"], limit: 300), homepage: homepage)
+    }
+    
+    public func fetchPyPIInfo(for packageName: String) async -> PyPIInfo? {
+        guard InputValidator.isValidPackageName(packageName),
+              let url = URL(string: "https://pypi.org/pypi/\(packageName)/json") else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 4.0
         request.setValue("DevKeeper/\(DevKeeperInfo.version)", forHTTPHeaderField: "User-Agent")
-        
-        do {
-            let (data, response) = try await URLSession.shared.devkeeperData(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return (nil, nil, nil)
+        guard let (data, response) = try? await URLSession.shared.devkeeperData(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+        return Self.parsePyPIInfo(data)
+    }
+    
+    /// Looks up several packages with a small amount of concurrency. Packages that could not be reached are
+    /// left out, so callers can try them again next time.
+    public func fetchPyPIInfo(for names: [String]) async -> [String: PyPIInfo] {
+        var result: [String: PyPIInfo] = [:]
+        var index = 0
+        let batchSize = 8
+        while index < names.count {
+            let batch = Array(names[index..<min(index + batchSize, names.count)])
+            index += batchSize
+            await withTaskGroup(of: (String, PyPIInfo?).self) { group in
+                for name in batch {
+                    group.addTask { (name, await self.fetchPyPIInfo(for: name)) }
+                }
+                for await (name, info) in group {
+                    if let info { result[name] = info }
+                }
             }
-            
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let info = json["info"] as? [String: Any] {
-                let version = info["version"] as? String
-                let summary = info["summary"] as? String
-                let homepage = info["home_page"] as? String ?? info["project_url"] as? String
-                return (version, summary, homepage)
-            }
-        } catch {
-            // Silently handle timeout
         }
-        return (nil, nil, nil)
+        return result
+    }
+    
+    public func checkLatestVersion(for packageName: String) async -> (latestVersion: String?, description: String?, homepage: String?) {
+        guard let info = await fetchPyPIInfo(for: packageName) else { return (nil, nil, nil) }
+        return (info.version, info.summary, info.homepage)
     }
     
     public func upgradePackage(name: String) -> AsyncStream<String> {

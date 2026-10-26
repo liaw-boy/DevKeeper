@@ -19,6 +19,8 @@ public final class BrewService: Sendable {
     
     private struct InstalledVersion: Decodable {
         let version: String
+        /// False when the formula was only pulled in as a dependency of something else.
+        let installed_on_request: Bool?
     }
     
     private struct FormulaVersions: Decodable {
@@ -98,7 +100,7 @@ public final class BrewService: Sendable {
                     PackageItem.computeUpdateStatus(current: installedVer, latest: latestVer) :
                     .upToDate
                 
-                result.append(PackageItem(
+                var item = PackageItem(
                     name: f.name,
                     currentVersion: installedVer,
                     latestVersion: latestVer,
@@ -106,7 +108,12 @@ public final class BrewService: Sendable {
                     status: status,
                     description: f.desc,
                     homepage: f.homepage
-                ))
+                )
+                // Only "explicitly not requested" counts; a missing field is treated as installed on purpose.
+                if let installed = f.installed, !installed.isEmpty {
+                    item.isDependencyOnly = installed.allSatisfy { $0.installed_on_request == false }
+                }
+                result.append(item)
             }
         }
         

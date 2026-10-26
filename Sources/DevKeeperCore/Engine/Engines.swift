@@ -38,11 +38,24 @@ public enum AuditEngine {
         npmPackages: [(name: String, version: String)],
         projectsRoot: String?
     ) async -> [VulnerabilityItem] {
+        await auditOutcome(interpreters: interpreters, npmPackages: npmPackages, projectsRoot: projectsRoot).vulnerabilities
+    }
+    
+    /// Same audit, but also reports how many lookups failed so an incomplete run is not mistaken for a clean one.
+    public static func auditOutcome(
+        interpreters: [PythonInterpreter],
+        npmPackages: [(name: String, version: String)],
+        projectsRoot: String?
+    ) async -> AuditOutcome {
         var detected: [VulnerabilityItem] = []
+        var checked = 0
+        var failed = 0
         var seen = Set<String>()
         
-        func record(_ vulns: [VulnerabilityItem]) {
-            for v in vulns {
+        func record(_ outcome: AuditOutcome) {
+            checked += outcome.checked
+            failed += outcome.failed
+            for v in outcome.vulnerabilities {
                 let scope = v.environment?.pythonPath ?? v.projectPath ?? ""
                 let key = "\(v.id)|\(v.packageName.lowercased())|\(scope)"
                 if seen.insert(key).inserted { detected.append(v) }
@@ -76,11 +89,11 @@ public enum AuditEngine {
                 let hasPackageJson = FileManager.default.fileExists(atPath: sub.appendingPathComponent("package.json").path)
                 let hasRequirements = FileManager.default.fileExists(atPath: sub.appendingPathComponent("requirements.txt").path)
                 if hasPackageJson || hasRequirements {
-                    record(await SecurityService.shared.auditProjectDirectory(at: sub))
+                    record(await SecurityService.shared.auditProjectDirectoryOutcome(at: sub))
                 }
             }
         }
-        return detected
+        return AuditOutcome(vulnerabilities: detected, checked: checked, failed: failed)
     }
     
     /// Built-in exception: pip, setuptools and wheel inside the OS-provided Python. Users cannot upgrade that
@@ -93,26 +106,30 @@ public enum AuditEngine {
     }
     
     /// Audits packages against OSV with a small amount of concurrency.
-    static func auditList(_ packages: [(name: String, version: String)], ecosystem: String, environment: PythonEnvironmentRef?) async -> [VulnerabilityItem] {
-        var results: [VulnerabilityItem] = []
+    static func auditList(_ packages: [(name: String, version: String)], ecosystem: String, environment: PythonEnvironmentRef?) async -> AuditOutcome {
+        var outcome = AuditOutcome()
         let batchSize = 8
         var index = 0
         while index < packages.count {
             let batch = Array(packages[index..<min(index + batchSize, packages.count)])
             index += batchSize
-            let found = await withTaskGroup(of: [VulnerabilityItem].self) { group in
+            let results = await withTaskGroup(of: (items: [VulnerabilityItem], succeeded: Bool).self) { group in
                 for pkg in batch {
                     group.addTask {
-                        await SecurityService.shared.auditPackage(name: pkg.name, version: pkg.version, ecosystem: ecosystem)
+                        await SecurityService.shared.auditPackageChecked(name: pkg.name, version: pkg.version, ecosystem: ecosystem)
                     }
                 }
-                var all: [VulnerabilityItem] = []
-                for await items in group { all.append(contentsOf: items) }
+                var all: [(items: [VulnerabilityItem], succeeded: Bool)] = []
+                for await result in group { all.append(result) }
                 return all
             }
-            results.append(contentsOf: environment.map { env in found.map { $0.inEnvironment(env) } } ?? found)
+            for result in results {
+                outcome.checked += 1
+                if !result.succeeded { outcome.failed += 1 }
+                outcome.vulnerabilities.append(contentsOf: environment.map { env in result.items.map { $0.inEnvironment(env) } } ?? result.items)
+            }
         }
-        return results
+        return outcome
     }
 }
 

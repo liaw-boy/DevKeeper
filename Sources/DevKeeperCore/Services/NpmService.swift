@@ -37,6 +37,43 @@ public final class NpmService: Sendable {
         return packages.sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
     
+    /// Fields shown for a package, read from the npm registry.
+    public struct RegistryInfo: Equatable, Sendable {
+        public var version: String?
+        public var description: String?
+        public var homepage: String?
+    }
+    
+    /// A browsable https link from a `repository` field: `git+https://host/user/repo.git`, `git://...`,
+    /// `github:user/repo` or `user/repo` (npm's GitHub shorthand). Anything else yields nil.
+    public static func repositoryLink(_ value: Any?) -> String? {
+        let raw: String?
+        if let text = value as? String { raw = text } else { raw = (value as? [String: Any])?["url"] as? String }
+        guard var url = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty, url.count <= 300 else { return nil }
+        if url.hasPrefix("github:") { url = "https://github.com/" + url.dropFirst("github:".count) }
+        else if url.range(of: #"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil { url = "https://github.com/" + url }
+        url = url.replacingOccurrences(of: "git+", with: "")
+        if url.hasPrefix("git://") { url = "https://" + url.dropFirst("git://".count) }
+        if url.hasPrefix("ssh://git@") { url = "https://" + url.dropFirst("ssh://git@".count) }
+        if url.hasSuffix(".git") { url = String(url.dropLast(4)) }
+        guard let parsed = URL(string: url), parsed.scheme == "https", parsed.host?.isEmpty == false else { return nil }
+        return url
+    }
+    
+    /// Reads the registry's `latest` document. Text is third-party, so it is trimmed and capped, and only https
+    /// links are kept.
+    public static func parseRegistryInfo(_ data: Data) -> RegistryInfo? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        func text(_ value: Any?, limit: Int) -> String? {
+            guard let raw = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return nil }
+            return String(raw.prefix(limit))
+        }
+        var homepage: String?
+        if let raw = text(json["homepage"], limit: 300), let url = URL(string: raw), url.scheme == "https" { homepage = raw }
+        homepage = homepage ?? repositoryLink(json["repository"])
+        return RegistryInfo(version: text(json["version"], limit: 64), description: text(json["description"], limit: 300), homepage: homepage)
+    }
+    
     public func checkLatestVersion(for packageName: String) async -> (latestVersion: String?, description: String?, homepage: String?) {
         guard let encodedName = packageName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: "https://registry.npmjs.org/\(encodedName)/latest") else {
@@ -47,22 +84,10 @@ public final class NpmService: Sendable {
         request.timeoutInterval = 4.0
         request.setValue("DevKeeper/\(DevKeeperInfo.version)", forHTTPHeaderField: "User-Agent")
         
-        do {
-            let (data, response) = try await URLSession.shared.devkeeperData(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return (nil, nil, nil)
-            }
-            
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                let version = json["version"] as? String
-                let desc = json["description"] as? String
-                let homepage = json["homepage"] as? String
-                return (version, desc, homepage)
-            }
-        } catch {
-            // Silently handle network timeout
-        }
-        return (nil, nil, nil)
+        guard let (data, response) = try? await URLSession.shared.devkeeperData(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let info = Self.parseRegistryInfo(data) else { return (nil, nil, nil) }
+        return (info.version, info.description, info.homepage)
     }
     
     public func upgradePackage(name: String) -> AsyncStream<String> {

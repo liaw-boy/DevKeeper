@@ -45,6 +45,8 @@ public struct AuditReport: Codable, Sendable {
     public let items: [AuditItemReport]
     /// Number of built-in exceptions left out (see `AuditEngine.isBuiltInException`).
     public let hiddenCount: Int
+    /// Package lookups that got no answer from OSV; when above zero a clean result is not trustworthy.
+    public let failedLookups: Int
 }
 
 public struct DetectedEnvironment: Sendable {
@@ -124,14 +126,15 @@ public enum ReportBuilder {
     
     public static func auditGroups(
         _ env: DetectedEnvironment, projectsRoot: String?, showAll: Bool
-    ) async -> (groups: [PackageVulnerabilityGroup], hidden: Int) {
-        let items = await AuditEngine.audit(
+    ) async -> (groups: [PackageVulnerabilityGroup], hidden: Int, failed: Int) {
+        let outcome = await AuditEngine.auditOutcome(
             interpreters: env.interpreters,
             npmPackages: await npmGlobals(),
             projectsRoot: projectsRoot
         )
+        let items = outcome.vulnerabilities
         let visible = showAll ? items : items.filter { !AuditEngine.isBuiltInException($0, interpreters: env.interpreters) }
-        return (PackageVulnerabilityGroup.grouped(from: visible), items.count - visible.count)
+        return (PackageVulnerabilityGroup.grouped(from: visible), items.count - visible.count, outcome.failed)
     }
     
     public static func auditItems(_ groups: [PackageVulnerabilityGroup]) -> [AuditItemReport] {
