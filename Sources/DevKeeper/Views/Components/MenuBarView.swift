@@ -118,30 +118,54 @@ public struct MenuBarView: View {
     }
     
     private var summary: some View {
-        VStack(alignment: .leading, spacing: DK.Space.xs) {
-            let count = viewModel.totalOutdatedCount
-            Text(count > 0 ? "\(count) 項可升級" : "全部都是最新版本")
-                .font(DK.Font.heading)
-                .foregroundColor(DK.textPrimary)
-            let vulnerabilities = viewModel.vulnerabilityCount
-            Button {
-                openTab(.security)
-            } label: {
-                Text(vulnerabilities > 0 ? "\(vulnerabilities) 個已知安全弱點" : "沒有已知安全弱點")
-                    .font(DK.Font.caption)
-                    .foregroundColor(vulnerabilities > 0 ? DK.danger : DK.textSecondary)
-                    .contentShape(Rectangle())
+        let count = viewModel.totalOutdatedCount
+        let vulnerabilities = viewModel.vulnerabilityCount
+        return VStack(alignment: .leading, spacing: DK.Space.s) {
+            HStack(alignment: .top, spacing: DK.Space.s) {
+                DKMetricCard(
+                    title: "可升級",
+                    value: "\(count)",
+                    caption: count > 0 ? nil : "全部都是最新版本",
+                    systemImage: "arrow.up.circle",
+                    barValue: totalPackageCount > 0 ? Double(count) / Double(totalPackageCount) : 0,
+                    action: { openTab(.overview) }
+                )
+                DKMetricCard(
+                    title: "安全弱點",
+                    value: "\(vulnerabilities)",
+                    caption: vulnerabilities > 0 ? nil : "沒有已知弱點",
+                    systemImage: "shield",
+                    valueColor: vulnerabilities > 0 ? DK.danger : DK.textPrimary,
+                    action: { openTab(.security) }
+                )
             }
-            .buttonStyle(DKPressStyle())
+            if vulnerabilities > 0 {
+                DKSegmentBar(segments: severitySegments)
+            }
         }
+    }
+    
+    private var totalPackageCount: Int {
+        viewModel.aiTools.count + viewModel.npmPackages.count + viewModel.pythonPackages.count + viewModel.brewPackages.count
+    }
+    
+    private var severitySegments: [(value: Double, color: Color)] {
+        func count(_ severities: [VulnerabilitySeverity]) -> Double {
+            Double(viewModel.vulnerabilities.filter { severities.contains($0.severity) }.count)
+        }
+        return [
+            (count([.critical]), DK.danger),
+            (count([.high]), DK.warning),
+            (count([.medium, .low, .unknown]), DK.textTertiary)
+        ]
     }
     
     private var categories: some View {
         VStack(spacing: 0) {
-            CategoryRow(title: NavigationTab.aiTools.title, outdated: viewModel.outdatedAIToolCount) { openTab(.aiTools) }
-            CategoryRow(title: NavigationTab.npm.title, outdated: viewModel.outdatedNpmCount) { openTab(.npm) }
-            CategoryRow(title: NavigationTab.python.title, outdated: viewModel.outdatedPythonCount) { openTab(.python) }
-            CategoryRow(title: NavigationTab.brew.title, outdated: viewModel.outdatedBrewCount) { openTab(.brew) }
+            CategoryRow(source: .ai, title: NavigationTab.aiTools.title, outdated: viewModel.outdatedAIToolCount, total: viewModel.aiTools.count) { openTab(.aiTools) }
+            CategoryRow(source: .npm, title: NavigationTab.npm.title, outdated: viewModel.outdatedNpmCount, total: viewModel.npmPackages.count) { openTab(.npm) }
+            CategoryRow(source: .python, title: NavigationTab.python.title, outdated: viewModel.outdatedPythonCount, total: viewModel.pythonPackages.count) { openTab(.python) }
+            CategoryRow(source: .homebrew, title: NavigationTab.brew.title, outdated: viewModel.outdatedBrewCount, total: viewModel.brewPackages.count) { openTab(.brew) }
         }
     }
     
@@ -232,25 +256,33 @@ public struct MenuBarView: View {
 }
 
 private struct CategoryRow: View {
+    let source: DKSource
     let title: String
     let outdated: Int
+    let total: Int
     let action: () -> Void
     @State private var isHovering = false
     
     var body: some View {
         Button(action: action) {
-            HStack {
-                Text(title)
-                    .font(DK.Font.body)
-                    .foregroundColor(DK.textPrimary)
-                Spacer()
-                Text(outdated > 0 ? "\(outdated) 可升級" : "最新")
-                    .font(DK.Font.caption)
-                    .monospacedDigit()
-                    .foregroundColor(outdated > 0 ? DK.textPrimary : DK.textTertiary)
+            HStack(spacing: DK.Space.s) {
+                DKSourceBadge(source, size: 22)
+                VStack(alignment: .leading, spacing: DK.Space.xs) {
+                    HStack {
+                        Text(title)
+                            .font(DK.Font.body)
+                            .foregroundColor(DK.textPrimary)
+                        Spacer()
+                        Text(outdated > 0 ? "\(outdated) 可升級" : "最新")
+                            .font(DK.Font.caption)
+                            .monospacedDigit()
+                            .foregroundColor(outdated > 0 ? DK.textPrimary : DK.textTertiary)
+                    }
+                    DKBar(value: total > 0 ? Double(outdated) / Double(total) : 0, height: 3)
+                }
             }
             .padding(.horizontal, DK.Space.s)
-            .frame(height: DK.controlHeight)
+            .frame(height: 40)
             .background(
                 RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
                     .fill(isHovering ? DK.surfaceHover : Color.clear)

@@ -109,7 +109,7 @@ private struct Sidebar: View {
                 .padding(.horizontal, DK.Space.l)
                 .frame(height: 36)
         }
-        .background(DK.background)
+        .background(DK.surfaceSunken)
     }
     
     private func section(_ title: String) -> some View {
@@ -171,7 +171,7 @@ private struct SidebarItem: View {
             HStack(spacing: DK.Space.s) {
                 Image(systemName: tab.sfSymbol)
                     .font(.system(size: DK.Icon.regular))
-                    .foregroundColor(isSelected ? DK.textPrimary : DK.textSecondary)
+                    .foregroundColor(isSelected ? DK.accent : DK.textSecondary)
                     .frame(width: 18)
                 Text(tab.title)
                     .font(isSelected ? DK.Font.bodyMedium : DK.Font.body)
@@ -189,7 +189,7 @@ private struct SidebarItem: View {
             .frame(height: DK.controlHeight)
             .background(
                 RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
-                    .fill(isSelected || isHovering ? DK.surfaceHover : Color.clear)
+                    .fill(isSelected ? DK.accentSubtle : (isHovering ? DK.surfaceHover : Color.clear))
             )
             .contentShape(Rectangle())
         }

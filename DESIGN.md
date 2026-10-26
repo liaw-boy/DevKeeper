@@ -6,10 +6,10 @@
 
 ## 原則
 
-- 極簡、中性：單色為主，用細邊線分隔，不用漸層、發光、彩色底色。
+- 柔和、中性：單色為主，用細邊線分隔，不用漸層、發光。唯一的彩色是低飽和藍強調色，加上套件來源標章的品牌色。
 - 支援淺色與深色；設定頁可選「跟隨系統／淺色／深色」。
 - 不使用 Apple 原生控制項（`Menu`、`Picker`、`Toggle`、`confirmationDialog`、`ProgressView`、`.sheet`、`.help`、`Link`、`NavigationSplitView`、`NSOpenPanel`），一律改用 `DK` 元件。視窗左上角的關閉、縮小、放大按鈕保留。
-- 正常狀態不上色；只有需要注意的狀態才用顏色，而且只用在文字。
+- 正常狀態不上色；需要注意的狀態用 `danger`／`warning` 顏色（文字、數字、嚴重度分段條）。強調色只用在選取、進度與比例條、連結與焦點。
 
 ## Token（`DKTokens.swift`）
 
@@ -17,7 +17,10 @@
 |---|---|---|---|
 | 視窗底色 | `DK.background` | #FAFAF9 | #161618 |
 | 卡片、輸入框、浮層 | `DK.surface` | #FFFFFF | #1E1E21 |
-| 滑過、選取 | `DK.surfaceHover` | #F2F2F0 | #26262A |
+| 側邊欄底色 | `DK.surfaceSunken` | #F2F2F0 | #111113 |
+| 滑過 | `DK.surfaceHover` | #F2F2F0 | #26262A |
+| 強調色（選取圖示與文字、比例條） | `DK.accent` | #3B6FD8 | #7AA2F7 |
+| 選取列底色 | `DK.accentSubtle` | #E8EFFC | #1E2A44 |
 | 邊線 | `DK.border` | #E4E4E0 | #2E2E32 |
 | 主要文字 | `DK.textPrimary` | #1A1A19 | #EDEDEC |
 | 次要文字 | `DK.textSecondary` | #6B6B68 | #A1A1A0 |
@@ -25,7 +28,7 @@
 | 主要按鈕（反白） | `DK.inverseBackground` / `DK.inverseText` | 深底白字 | 淺底深字 |
 | 危險、重大版本、完成（只用於文字） | `DK.danger` / `DK.warning` / `DK.success` | | |
 
-字級只有五種，不用半點數，不用 bold：
+字級只有六種，不用半點數，不用 bold（唯一例外見下）：
 
 | 用途 | Token | 大小 |
 |---|---|---|
@@ -35,12 +38,15 @@
 | 次要資訊 | `DK.Font.caption` | 12 |
 | 標籤、計數 | `DK.Font.micro` | 11 medium |
 | 版本、指令、路徑 | `DK.Font.mono` | 12 等寬 |
+| 卡片大數字 | `DK.Font.display` | 28 semibold |
+
+- 例外：`DKSourceBadge` 的縮寫用 bold 圓體，大小隨標章尺寸縮放；它是品牌色標章，不是文字。
 
 - 間距只用 `DK.Space`：元素之間用 4、8、12、16、24、32；2、6、10（`xxs`、`tight`、`snug`）只用在控制項內部的留白。頁面左右留白一律 `DK.pagePadding`（24），標題與內容對齊。
 - 圓角：控制項 `DK.Radius.control`（6），卡片與面板 `DK.Radius.card`（10），控制項內的巢狀元素（分段選取底色、選單列）`DK.Radius.inner`（4）。標籤、徽章不用膠囊形；開關軌道是唯一的圓端外形。
 - 控制項高度 `DK.controlHeight`（28），清單列內的小按鈕 `DK.compactControlHeight`（24）。
-- 邊線一律 1pt。只有浮層（下拉面板、提示、對話面板）有淡陰影。
-- 圖示：SF Symbols、單色、次要文字色；大小用 `DK.Icon`：一般 13、勾選與欄位內圖示 11、箭頭與清除鈕 9。只用在側邊欄、純圖示按鈕和必須靠圖示表意的狀態。標題、卡片標題、文字按鈕、統計數字旁不放圖示。
+- 邊線一律 1pt。卡片有極淡陰影（`DK.shadowSoft`），浮層（下拉面板、提示、對話面板）有較明顯的陰影。
+- 圖示：SF Symbols、單色、次要文字色；大小用 `DK.Icon`：一般 13、勾選與欄位內圖示 11、箭頭與清除鈕 9。只用在側邊欄、純圖示按鈕和必須靠圖示表意的狀態。標題、卡片標題不放圖示。文字按鈕可用 `DKButton(systemImage:)` 帶圖示；`DKMetricCard` 的標題旁可放 `DKIconTile` 或來源標章。
 - 動態：按下只降透明度（`DKPressStyle`），滑過換底色；過場 0.12 秒淡入淡出。不用彈跳、縮放、位移動畫。
 
 ## 元件
@@ -58,6 +64,10 @@
 | `DKTag` | 標籤：無底色、細邊框，只靠文字顏色區分 |
 | `DKStatusText` | 套件升級狀態，純文字 |
 | `.dkCard()`、`DKDivider` | 唯一的卡片樣式與分隔線 |
+| `DKIconTile` | 中性底色的單色圖示方塊 |
+| `DKSourceBadge` | 套件來源（npm、Python、Homebrew、App、AI、資料庫）的品牌色縮寫標章，不使用官方商標圖 |
+| `DKBar`、`DKSegmentBar` | 比例條（例如可升級／全部）與分段條（弱點依嚴重度） |
+| `DKMetricCard` | 大數字卡片：標題、數字、說明、可選比例條，可整張點擊 |
 | `DKPageHeader`、`DKSectionTitle` | 頁面標題列與區塊標題 |
 | `DKEmptyState` | 載入中、尚未檢查、沒有資料、全部最新、發生錯誤 |
 | `DKCommandBlock` | 指令：等寬、可選取、可複製 |

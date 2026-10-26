@@ -84,6 +84,27 @@ private struct GalleryColumn: View {
                     }
                 }
                 
+                group("強調與數據") {
+                    HStack(spacing: DK.Space.s) {
+                        DKSourceBadge(.npm)
+                        DKSourceBadge(.python)
+                        DKSourceBadge(.homebrew)
+                        DKSourceBadge(.cask)
+                        DKSourceBadge(.ai)
+                        DKSourceBadge(.database)
+                        DKIconTile("shield")
+                        DKButton("檢查", systemImage: "arrow.clockwise") {}
+                        DKButton("升級", systemImage: "arrow.up.circle", kind: .primary) {}
+                    }
+                    HStack(alignment: .top, spacing: DK.Space.s) {
+                        DKMetricCard(title: "可升級", value: "12", caption: "共 42 個套件", systemImage: "arrow.up.circle", barValue: 12.0 / 42)
+                        DKMetricCard(title: "npm", value: "5", source: .npm, barValue: 0.25)
+                        DKMetricCard(title: "安全弱點", value: "3", systemImage: "shield", valueColor: DK.danger)
+                    }
+                    DKSegmentBar(segments: [(1, DK.danger), (2, DK.warning), (4, DK.textTertiary)])
+                    DKBar(value: 0.3)
+                }
+                
                 group("卡片與清單") {
                     VStack(alignment: .leading, spacing: 0) {
                         sampleRow("typescript", "5.6.2", "5.6.3", .patch)
