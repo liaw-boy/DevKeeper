@@ -22,6 +22,7 @@ public final class StatusBarController: NSObject {
     private var ownClickMonitor: Any?
     private var appSwitchObserver: NSObjectProtocol?
     private var lastBadgeCount = -1
+    private var boxIcon: StatusBoxIcon!
     /// When the panel last closed because it lost focus; clicking the status item at that moment must not reopen it.
     private var lastAutoClose = Date.distantPast
     
@@ -62,11 +63,9 @@ public final class StatusBarController: NSObject {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         guard let button = statusItem.button else { return }
-        // A template image is tinted by macOS, so it stays readable on light and dark menu bars.
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-        let image = NSImage(systemSymbolName: "shippingbox", accessibilityDescription: "DevKeeper")?.withSymbolConfiguration(config)
-        image?.isTemplate = true
-        button.image = image
+        // A coloured cardboard box rather than a template image; its lid opens while the panel is shown.
+        boxIcon = StatusBoxIcon { [weak button] image in button?.image = image }
+        button.image = boxIcon.image
         button.imagePosition = .imageLeading
         button.target = self
         button.action = #selector(togglePanel(_:))
@@ -119,6 +118,7 @@ public final class StatusBarController: NSObject {
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: buttonRect.minY - 6))
         panel.makeKeyAndOrderFront(nil)
         self.panel = panel
+        boxIcon.setOpen(true)
         guard autoDismiss else { return }
         
         // Close on clicks elsewhere. Losing key status is not used: the panel does not activate the app,
@@ -158,6 +158,7 @@ public final class StatusBarController: NSObject {
         if let appSwitchObserver { NSWorkspace.shared.notificationCenter.removeObserver(appSwitchObserver) }
         appSwitchObserver = nil
         guard let closing = panel else { return }
+        boxIcon.setOpen(false)
         closing.orderOut(nil)
         panel = nil
         // Keep the window alive until the click that closed it has finished dispatching.
