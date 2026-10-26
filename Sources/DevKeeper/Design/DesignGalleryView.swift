@@ -96,6 +96,14 @@ private struct GalleryColumn: View {
                         DKButton("檢查", systemImage: "arrow.clockwise") {}
                         DKButton("升級", systemImage: "arrow.up.circle", kind: .primary) {}
                     }
+                    HStack(spacing: DK.Space.s) {
+                        DKPackageAvatar(name: "openssl@4", source: .homebrew)
+                        DKPackageAvatar(name: "postgresql", source: .database)
+                        DKPackageAvatar(name: "ffmpeg", source: .homebrew)
+                        DKPackageAvatar(name: "eslint", source: .npm)
+                        DKPackageAvatar(name: "requests", source: .python)
+                        DKPackageAvatar(name: "unknown-tool", source: .cask)
+                    }
                     HStack(alignment: .top, spacing: DK.Space.s) {
                         DKMetricCard(title: "可升級", value: "12", caption: "共 42 個套件", systemImage: "arrow.up.circle", barValue: 12.0 / 42)
                         DKMetricCard(title: "npm", value: "5", source: .npm, barValue: 0.25)

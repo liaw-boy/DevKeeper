@@ -18,12 +18,10 @@ public struct MainView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(DK.background)
+            .background(InstallPresenter(viewModel: viewModel))
         }
         .ignoresSafeArea(.container, edges: .top)
         .frame(minWidth: 1100, minHeight: 700)
-        .sheet(isPresented: $viewModel.showInstallSheet) {
-            InstallPackageSheet(viewModel: viewModel)
-        }
     }
     
     @ViewBuilder
@@ -71,16 +69,11 @@ private struct Sidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // The window's close/minimise/zoom buttons sit at the left of this row.
-            HStack {
-                Spacer()
-                Text("DevKeeper")
-                    .font(DK.Font.caption)
-                    .foregroundColor(DK.textTertiary)
-            }
-            .frame(height: 28)
-            .padding(.horizontal, DK.Space.l)
-            .padding(.top, DK.Space.xs)
-            .padding(.bottom, DK.Space.m)
+            Color.clear.frame(height: 30)
+            
+            brand
+                .padding(.horizontal, DK.Space.l)
+                .padding(.bottom, DK.Space.m)
             
             VStack(alignment: .leading, spacing: DK.Space.xxs) {
                 item(.overview)
@@ -110,6 +103,27 @@ private struct Sidebar: View {
                 .frame(height: 36)
         }
         .background(DK.surfaceSunken)
+    }
+    
+    private var brand: some View {
+        HStack(spacing: DK.Space.m) {
+            Image(systemName: "shippingbox.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(DK.onAccent)
+                .frame(width: 32, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.accent)
+                )
+            VStack(alignment: .leading, spacing: 1) {
+                Text("DevKeeper")
+                    .font(DK.Font.heading)
+                    .foregroundColor(DK.textPrimary)
+                Text(viewModel.totalOutdatedCount > 0 ? "\(viewModel.totalOutdatedCount) 項可升級" : "全部最新")
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textTertiary)
+            }
+            Spacer(minLength: 0)
+        }
     }
     
     private func section(_ title: String) -> some View {
@@ -166,13 +180,34 @@ private struct SidebarItem: View {
     let action: () -> Void
     @State private var isHovering = false
     
+    /// Package pages carry their source colour; the rest use a quiet symbol.
+    private var source: DKSource? {
+        switch tab {
+        case .aiTools: return .ai
+        case .npm: return .npm
+        case .python: return .python
+        case .brew: return .homebrew
+        case .database: return .database
+        default: return nil
+        }
+    }
+    
+    @ViewBuilder
+    private var icon: some View {
+        if let source {
+            DKSourceBadge(source, size: 22)
+        } else {
+            Image(systemName: tab.sfSymbol)
+                .font(.system(size: DK.Icon.regular))
+                .foregroundColor(alert && count > 0 ? DK.danger : (isSelected ? DK.accent : DK.textSecondary))
+                .frame(width: 22, height: 22)
+        }
+    }
+    
     var body: some View {
         Button(action: action) {
             HStack(spacing: DK.Space.s) {
-                Image(systemName: tab.sfSymbol)
-                    .font(.system(size: DK.Icon.regular))
-                    .foregroundColor(isSelected ? DK.accent : DK.textSecondary)
-                    .frame(width: 18)
+                icon
                 Text(tab.title)
                     .font(isSelected ? DK.Font.bodyMedium : DK.Font.body)
                     .foregroundColor(isSelected ? DK.textPrimary : DK.textSecondary)
@@ -180,13 +215,19 @@ private struct SidebarItem: View {
                 Spacer(minLength: DK.Space.s)
                 if count > 0 {
                     Text("\(count)")
-                        .font(DK.Font.caption)
+                        .font(DK.Font.micro)
                         .monospacedDigit()
-                        .foregroundColor(alert ? DK.danger : DK.textTertiary)
+                        .foregroundColor(alert ? DK.danger : (isSelected ? DK.accent : DK.textSecondary))
+                        .padding(.horizontal, 6)
+                        .frame(minWidth: 20, minHeight: 18)
+                        .background(
+                            Capsule().fill(alert ? Color(light: 0xC62828, dark: 0xF07A7A, lightAlpha: 0.12, darkAlpha: 0.2)
+                                                 : (isSelected ? DK.surface.opacity(0.7) : DK.border.opacity(0.6)))
+                        )
                 }
             }
             .padding(.horizontal, DK.Space.s)
-            .frame(height: DK.controlHeight)
+            .frame(height: 32)
             .background(
                 RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
                     .fill(isSelected ? DK.accentSubtle : (isHovering ? DK.surfaceHover : Color.clear))

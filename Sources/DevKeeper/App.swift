@@ -5,6 +5,8 @@ import AppKit
 @main
 struct DevKeeperApp: App {
     @StateObject private var viewModel = AppViewModel()
+    @AppStorage(DKAppearance.storageKey) private var appearanceRaw = DKAppearance.system.rawValue
+    private var appearance: DKAppearance { DKAppearance(rawValue: appearanceRaw) ?? .system }
     @State private var statusBarController: StatusBarController?
     
     init() {
@@ -19,8 +21,12 @@ struct DevKeeperApp: App {
             } else {
                 MainView()
                     .environmentObject(viewModel)
-                    .preferredColorScheme(.dark)
+                    .preferredColorScheme(appearance.colorScheme)
                     .task {
+                        // Development aid for screenshots: open on a given page (its Chinese title).
+                        if let tab = ProcessInfo.processInfo.environment["DEVKEEPER_TAB"].flatMap(NavigationTab.init(rawValue:)) {
+                            viewModel.selectedTab = tab
+                        }
                         if statusBarController == nil {
                             statusBarController = StatusBarController(viewModel: viewModel)
                         }

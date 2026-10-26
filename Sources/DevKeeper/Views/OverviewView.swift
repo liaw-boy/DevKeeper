@@ -3,701 +3,376 @@ import SwiftUI
 
 public struct OverviewView: View {
     @ObservedObject var viewModel: AppViewModel
-    
-    // Filtering and sorting state for outdated list
+    @Environment(\.dkOverlay) private var overlay
+
     @State private var filterCategory: CategoryFilter = .all
     @State private var filterScope: ScopeFilter = .all
     @State private var sortOption: SortOption = .outdatedness
-    @State private var searchKeyword: String = ""
-    
-    enum CategoryFilter: String, CaseIterable, Identifiable {
-        case all = "全部生態"
-        case brew = "Homebrew"
-        case python = "Python pip"
-        case npm = "npm 全域"
-        
-        var id: String { rawValue }
-    }
-    
-    enum ScopeFilter: String, CaseIterable, Identifiable {
-        case all = "全部更新幅度"
-        case major = "重大更新 (Major)"
-        case minor = "次要更新 (Minor)"
-        case patch = "修補更新 (Patch)"
-        
-        var id: String { rawValue }
-    }
-    
-    enum SortOption: String, CaseIterable, Identifiable {
-        case outdatedness = "依過舊程度 (重大更新優先)"
-        case name = "依套件名稱 (A-Z)"
-        case type = "依生態類別"
-        
-        var id: String { rawValue }
-    }
-    
+    @State private var searchKeyword = ""
+
+    enum CategoryFilter: Hashable { case all, brew, python, npm }
+    enum ScopeFilter: Hashable { case all, major, minor, patch }
+    enum SortOption: Hashable { case outdatedness, name, type }
+
     public init(viewModel: AppViewModel) {
         self.viewModel = viewModel
     }
-    
+
+    /// Everything outdated that this page lists (AI tools have their own page).
+    private var outdatedItems: [PackageItem] {
+        (viewModel.npmPackages + viewModel.brewPackages + viewModel.pythonPackages).filter { $0.status.isOutdated }
+    }
+
+    private var isFiltering: Bool {
+        filterCategory != .all || filterScope != .all || !searchKeyword.dkSearchKey.isEmpty
+    }
+
     private var filteredOutdatedItems: [PackageItem] {
-        let all = (viewModel.npmPackages + viewModel.brewPackages + viewModel.pythonPackages).filter { $0.status.isOutdated }
-        
-        return all.filter { item in
-            // Category filter
+        let query = searchKeyword.dkSearchKey
+        return outdatedItems.filter { item in
             switch filterCategory {
             case .all: break
-            case .brew:
-                if item.type != .brewFormula && item.type != .brewCask { return false }
-            case .python:
-                if item.type != .python { return false }
-            case .npm:
-                if item.type != .npm { return false }
+            case .brew: if item.type != .brewFormula && item.type != .brewCask { return false }
+            case .python: if item.type != .python { return false }
+            case .npm: if item.type != .npm { return false }
             }
-            
-            // Scope filter
-            if filterScope != .all {
-                let scope = computeUpdateScope(for: item)
-                if scope != filterScope { return false }
+            switch filterScope {
+            case .all: break
+            case .major: if item.status != .major { return false }
+            case .minor: if item.status != .minor { return false }
+            case .patch: if item.status != .patch { return false }
             }
-            
-            // Search keyword
-            if !searchKeyword.trimmingCharacters(in: .whitespaces).isEmpty {
-                let q = searchKeyword.lowercased()
-                let nameMatch = item.name.lowercased().contains(q)
-                let descMatch = item.description?.lowercased().contains(q) ?? false
-                if !nameMatch && !descMatch { return false }
+            if !query.isEmpty {
+                let inName = item.name.lowercased().contains(query)
+                let inDescription = item.description?.lowercased().contains(query) ?? false
+                if !inName && !inDescription { return false }
             }
-            
             return true
         }.sorted { a, b in
             switch sortOption {
             case .outdatedness:
-                let scopeA = computeUpdateScope(for: a)
-                let scopeB = computeUpdateScope(for: b)
-                let rankA = (scopeA == .major ? 3 : (scopeA == .minor ? 2 : 1))
-                let rankB = (scopeB == .major ? 3 : (scopeB == .minor ? 2 : 1))
-                if rankA != rankB { return rankA > rankB }
+                if rank(a) != rank(b) { return rank(a) > rank(b) }
                 return a.name.lowercased() < b.name.lowercased()
-                
             case .name:
                 return a.name.lowercased() < b.name.lowercased()
-                
             case .type:
-                return a.type.rawValue < b.type.rawValue
+                if a.type.rawValue != b.type.rawValue { return a.type.rawValue < b.type.rawValue }
+                return a.name.lowercased() < b.name.lowercased()
             }
         }
     }
-    
-    private func computeUpdateScope(for pkg: PackageItem) -> ScopeFilter {
-        guard let latest = pkg.latestVersion else { return .patch }
-        let cParts = pkg.currentVersion.trimmingCharacters(in: CharacterSet(charactersIn: "vV ")).components(separatedBy: ".")
-        let lParts = latest.trimmingCharacters(in: CharacterSet(charactersIn: "vV ")).components(separatedBy: ".")
-        
-        let cMajor = Int(cParts.first ?? "0") ?? 0
-        let lMajor = Int(lParts.first ?? "0") ?? 0
-        if lMajor > cMajor { return .major }
-        
-        if cParts.count > 1 && lParts.count > 1 {
-            let cMinor = Int(cParts[1]) ?? 0
-            let lMinor = Int(lParts[1]) ?? 0
-            if lMinor > cMinor { return .minor }
+
+    private func rank(_ item: PackageItem) -> Int {
+        switch item.status {
+        case .major: return 3
+        case .minor: return 2
+        default: return 1
         }
-        
-        return .patch
     }
-    
+
+    /// What "upgrade npm and Homebrew" will touch; Python packages and AI tools are upgraded on their own pages.
+    private var upgradableCount: Int {
+        viewModel.outdatedNpmCount + viewModel.outdatedBrewCount
+    }
+
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // Header Area
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "gauge")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(Theme.primaryIndigo)
-                            Text("系統套件總覽")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.primary)
-                        }
-                        
-                        if let lastScan = viewModel.lastScanDate {
-                            Text("上次檢查時間: \(lastScan, formatter: dateFormatter)")
-                                .font(.system(size: 11.5))
-                                .monospacedDigit()
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text("正在分析本機套件與依賴狀態...")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    Spacer()
-                    
-                    HStack(spacing: 10) {
-                        Button(action: { viewModel.showInstallSheet = true }) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text("安裝套件")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.06))
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.bouncy)
-                        .disabled(viewModel.isActionRunning)
-                        
-                        Button(action: {
-                            Task { await viewModel.scanAll() }
-                        }) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text("重新檢查")
-                                    .font(.system(size: 12, weight: .medium))
-                            }
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 6)
-                            .background(Color.white.opacity(0.06))
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.bouncy)
-                        .disabled(viewModel.isScanning || viewModel.isActionRunning)
-                        
-                        if viewModel.totalOutdatedCount > 0 {
-                            Button(action: {
-                                Task {
-                                    await viewModel.upgradeAllOutdatedNpm()
-                                    await viewModel.upgradeAllOutdatedBrew()
-                                }
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                        .font(.system(size: 11.5, weight: .bold))
-                                    HStack(spacing: 0) {
-                                        Text("全部升級 (")
-                                        Text("\(viewModel.totalOutdatedCount)")
-                                            .monospacedDigit()
-                                        Text(")")
-                                    }
-                                    .font(.system(size: 12, weight: .semibold))
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 6)
-                                .background(Theme.primaryGradient)
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                                .shadow(color: Theme.primaryIndigo.opacity(0.4), radius: 6, x: 0, y: 2)
-                            }
-                            .buttonStyle(.bouncy)
-                            .disabled(viewModel.isActionRunning || viewModel.isScanning)
-                        }
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                VStack(alignment: .leading, spacing: DK.Space.xl) {
+                    notices
+                    metrics
+                    outdatedSection
+                    environment
                 }
-                
-                // GitHub Self-Update Banner
-                if viewModel.appUpdateAvailable {
-                    HStack(spacing: 12) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 18))
-                            .foregroundColor(Theme.primaryIndigo)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("DevKeeper v\(viewModel.latestAppVersion) 最新版本已發布！")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.primary)
-                            Text("包含最新功能更新與效能提升，建議前往 GitHub 下載最新版本。")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if let url = InputValidator.httpsURL(viewModel.appDownloadUrl, allowedHosts: ["github.com"]) {
-                            Link(destination: url) {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "arrow.down.circle")
-                                        .font(.system(size: 11.5, weight: .bold))
-                                    Text("查看新版")
-                                        .font(.system(size: 11.5, weight: .semibold))
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Theme.primaryGradient)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            }
-                            .buttonStyle(.bouncy)
-                        }
-                    }
-                    .padding(12)
-                    .background(Theme.primaryIndigo.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Theme.primaryIndigo.opacity(0.3), lineWidth: 1)
-                    )
-                }
-                
-                // Security Alert Banner if vulnerabilities found
-                if viewModel.vulnerabilityCount > 0 {
-                    HStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.shield.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(Theme.dangerRed)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("安全警報：偵測到 \(viewModel.vulnerabilityCount) 個安全性弱點 (CVE)！")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.primary)
-                            Text("已透過 Google OSV 資料庫發現已安裝套件存在已知安全漏洞，建議前往安全弱點稽核檢視並立即修復。")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            withAnimation(.easeOut(duration: 0.12)) {
-                                viewModel.selectedTab = .security
-                            }
-                        }) {
-                            Text("查看弱點清單")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Theme.dangerRed)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                        .buttonStyle(.bouncy)
-                    }
-                    .padding(12)
-                    .background(Theme.dangerRed.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Theme.dangerRed.opacity(0.35), lineWidth: 1)
-                    )
-                }
-                
-                // MARK: - Redesigned Space-Efficient Compact Metric Grid (2 Rows x 4 Columns)
-                // Height is reduced from ~360pt down to ~95pt, liberating over 260pt of vertical space!
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 8) {
-                    compactMetricCard(
-                        title: "AI 開發工具",
-                        count: viewModel.aiTools.count,
-                        outdated: viewModel.outdatedAIToolCount,
-                        symbol: "sparkles",
-                        tint: Theme.primaryIndigo,
-                        tab: .aiTools
-                    )
-                    
-                    compactMetricCard(
-                        title: "npm 全域工具",
-                        count: viewModel.npmPackages.count,
-                        outdated: viewModel.outdatedNpmCount,
-                        symbol: "cube",
-                        tint: Theme.infoCyan,
-                        tab: .npm
-                    )
-                    
-                    compactMetricCard(
-                        title: "Python (pip)",
-                        count: viewModel.pythonPackages.count,
-                        outdated: viewModel.outdatedPythonCount,
-                        symbol: "chevron.left.forwardslash.chevron.right",
-                        tint: Theme.successGreen,
-                        tab: .python
-                    )
-                    
-                    compactMetricCard(
-                        title: "Homebrew",
-                        count: viewModel.brewPackages.count,
-                        outdated: viewModel.outdatedBrewCount,
-                        symbol: "shippingbox",
-                        tint: Theme.warningAmber,
-                        tab: .brew
-                    )
-                    
-                    compactMetricCard(
-                        title: "資料庫服務",
-                        count: viewModel.databaseServices.count,
-                        outdated: 0,
-                        symbol: "cylinder.split.1x2",
-                        tint: Theme.purpleAccent,
-                        tab: .database
-                    )
-                    
-                    compactMetricCard(
-                        title: "安全弱點 (CVE)",
-                        count: viewModel.vulnerabilities.count,
-                        outdated: viewModel.vulnerabilities.count,
-                        symbol: "shield.checkered",
-                        tint: viewModel.vulnerabilities.isEmpty ? Theme.successGreen : Theme.dangerRed,
-                        tab: .security
-                    )
-                    
-                    compactMetricCard(
-                        title: "待升級總覽",
-                        count: viewModel.totalOutdatedCount,
-                        outdated: viewModel.totalOutdatedCount,
-                        symbol: "bolt.fill",
-                        tint: Theme.warningAmber,
-                        tab: .overview
-                    )
-                }
-                
-                // MARK: - Outdated Packages Quick Action List with Multi-Dimensional Filters
-                VStack(alignment: .leading, spacing: 12) {
-                    // Title Row
-                    HStack {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.stack.3d.up.fill")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(Theme.warningAmber)
-                            Text("待升級清單")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(.primary)
-                        }
-                        
-                        Spacer()
-                        
-                        if viewModel.totalOutdatedCount > 0 {
-                            Text("顯示 \(filteredOutdatedItems.count) / 全系統 \(viewModel.totalOutdatedCount) 個可升級項目")
-                                .font(.system(size: 11))
-                                .monospacedDigit()
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    // Custom Styled Filter & Sort Toolbar (Replacing standard macOS system popups)
-                    HStack(spacing: 8) {
-                        // Category Menu
-                        Menu {
-                            ForEach(CategoryFilter.allCases) { cat in
-                                Button(action: { filterCategory = cat }) {
-                                    if filterCategory == cat {
-                                        Label(cat.rawValue, systemImage: "checkmark")
-                                    } else {
-                                        Text(cat.rawValue)
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "square.grid.2x2")
-                                    .font(.system(size: 10.5))
-                                    .foregroundColor(filterCategory != .all ? Theme.primaryIndigo : .secondary)
-                                Text(filterCategory.rawValue)
-                                    .font(.system(size: 11.5, weight: filterCategory != .all ? .semibold : .medium))
-                                    .foregroundColor(filterCategory != .all ? .white : .primary)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(.secondary.opacity(0.8))
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(height: 28)
-                            .background(filterCategory != .all ? Theme.primaryIndigo.opacity(0.14) : Color.white.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .stroke(filterCategory != .all ? Theme.primaryIndigo.opacity(0.4) : Theme.subtleBorder, lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        
-                        // Scope Menu (Major, Minor, Patch)
-                        Menu {
-                            ForEach(ScopeFilter.allCases) { sc in
-                                Button(action: { filterScope = sc }) {
-                                    if filterScope == sc {
-                                        Label(sc.rawValue, systemImage: "checkmark")
-                                    } else {
-                                        Text(sc.rawValue)
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "bolt")
-                                    .font(.system(size: 10.5))
-                                    .foregroundColor(filterScope != .all ? Theme.warningAmber : .secondary)
-                                Text(filterScope.rawValue)
-                                    .font(.system(size: 11.5, weight: filterScope != .all ? .semibold : .medium))
-                                    .foregroundColor(filterScope != .all ? .white : .primary)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(.secondary.opacity(0.8))
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(height: 28)
-                            .background(filterScope != .all ? Theme.warningAmber.opacity(0.14) : Color.white.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .stroke(filterScope != .all ? Theme.warningAmber.opacity(0.4) : Theme.subtleBorder, lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        
-                        // Sort Option Menu
-                        Menu {
-                            ForEach(SortOption.allCases) { so in
-                                Button(action: { sortOption = so }) {
-                                    if sortOption == so {
-                                        Label(so.rawValue, systemImage: "checkmark")
-                                    } else {
-                                        Text(so.rawValue)
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.up.arrow.down")
-                                    .font(.system(size: 10.5))
-                                    .foregroundColor(sortOption != .outdatedness ? Theme.infoCyan : .secondary)
-                                Text(sortOption.rawValue)
-                                    .font(.system(size: 11.5, weight: .medium))
-                                    .foregroundColor(.primary)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(.secondary.opacity(0.8))
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(height: 28)
-                            .background(Color.white.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .stroke(Theme.subtleBorder, lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        
-                        // Reset button if any filter active
-                        if filterCategory != .all || filterScope != .all || !searchKeyword.isEmpty {
-                            Button(action: {
-                                withAnimation(.easeOut(duration: 0.12)) {
-                                    filterCategory = .all
-                                    filterScope = .all
-                                    sortOption = .outdatedness
-                                    searchKeyword = ""
-                                }
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.uturn.backward")
-                                        .font(.system(size: 9.5))
-                                    Text("重設")
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 8)
-                                .frame(height: 28)
-                                .background(Color.white.opacity(0.04))
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .stroke(Theme.subtleBorder, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .help("重設所有篩選條件")
-                        }
-                        
-                        Spacer()
-                        
-                        // Search Box (Unified 28pt height)
-                        HStack(spacing: 6) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            TextField("搜尋待升級套件名稱...", text: $searchKeyword)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 11.5))
-                            if !searchKeyword.isEmpty {
-                                Button(action: { searchKeyword = "" }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(width: 190, height: 28)
-                        .background(Color.white.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(Theme.subtleBorder, lineWidth: 1)
-                        )
-                    }
-                    .padding(.vertical, 2)
-                    
-                    // Outdated List Cards
-                    if filteredOutdatedItems.isEmpty {
-                        HStack {
-                            Spacer()
-                            VStack(spacing: 8) {
-                                Image(systemName: viewModel.totalOutdatedCount == 0 ? "checkmark.circle.fill" : "line.3.horizontal.decrease.circle")
-                                    .font(.system(size: 26))
-                                    .foregroundColor(viewModel.totalOutdatedCount == 0 ? Theme.successGreen : .secondary.opacity(0.6))
-                                Text(viewModel.totalOutdatedCount == 0 ? "所有開發套件均為最新版本" : "沒有符合目前篩選條件的項目")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.primary)
-                                Text(viewModel.totalOutdatedCount == 0 ? "開發環境保持最新狀態，無待升級項目" : "請嘗試切換更新幅度、生態分類或清除搜尋關鍵字")
-                                    .font(.system(size: 11.5))
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.vertical, 32)
-                            Spacer()
-                        }
-                        .background(Theme.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Theme.subtleBorder, lineWidth: 1)
-                        )
-                    } else {
-                        VStack(spacing: 8) {
-                            ForEach(filteredOutdatedItems) { package in
-                                PackageRow(
-                                    package: package,
-                                    isActionRunning: viewModel.currentActionPackageId == package.id,
-                                    onUpgrade: {
-                                        Task { await viewModel.upgradeSingle(package: package) }
-                                    },
-                                    onCleanUninstall: {
-                                        Task { await viewModel.cleanUninstall(package: package) }
-                                    }
-                                )
-                                .transition(
-                                    .asymmetric(
-                                        insertion: .opacity.combined(with: .scale(scale: 0.98)),
-                                        removal: .scale(scale: 0.92, anchor: .center)
-                                            .combined(with: .opacity)
-                                            .combined(with: .offset(x: 35))
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-                
-                // Environment Info Section
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("開發執行環境資訊")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    HStack(spacing: 12) {
-                        envBadge(label: "Node.js", value: viewModel.systemInfo.nodeVersion)
-                        envBadge(label: "npm", value: viewModel.systemInfo.npmVersion)
-                        envBadge(label: "Python", value: viewModel.systemInfo.pythonVersion)
-                        envBadge(label: "Homebrew", value: viewModel.systemInfo.brewVersion)
-                    }
-                }
+                .padding(.horizontal, DK.pagePadding)
+                .padding(.bottom, DK.pagePadding)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 20)
+        }
+        .background(DK.background)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        DKPageHeader(
+            "總覽",
+            subtitle: viewModel.lastScanDate.map { "上次檢查 \(Self.dateFormatter.string(from: $0))" } ?? "尚未檢查",
+            count: outdatedItems.isEmpty ? nil : "\(outdatedItems.count) 項可升級"
+        ) {
+            DKButton("安裝套件", systemImage: "plus") { viewModel.showInstallSheet = true }
+                .disabled(viewModel.isActionRunning)
+            DKButton("重新檢查", systemImage: "arrow.clockwise", isLoading: viewModel.isScanning) {
+                Task { await viewModel.scanAll() }
+            }
+            .disabled(viewModel.isScanning || viewModel.isActionRunning)
+            if upgradableCount > 0 {
+                DKButton("升級 npm 與 Homebrew（\(upgradableCount)）", kind: .primary,
+                         disabledReason: viewModel.isActionRunning || viewModel.isScanning ? "正在執行其他操作" : nil) {
+                    confirmUpgradeAll()
+                }
+                .disabled(viewModel.isActionRunning || viewModel.isScanning)
+            }
         }
     }
-    
-    // MARK: - Ultra-Compact Metric Card (~46pt height)
-    private func compactMetricCard(
-        title: String,
-        count: Int,
-        outdated: Int,
-        symbol: String,
-        tint: Color,
-        tab: NavigationTab
-    ) -> some View {
-        Button(action: {
-            withAnimation(.easeOut(duration: 0.12)) {
-                viewModel.selectedTab = tab
+
+    private func confirmUpgradeAll() {
+        overlay?.confirm(
+            "升級 \(upgradableCount) 個項目？",
+            message: "只升級清單上的 npm 與 Homebrew 項目。Python 套件與 AI 工具請在各自的頁面升級。",
+            commands: viewModel.upgradeAllCommands,
+            confirmTitle: "全部升級"
+        ) {
+            Task {
+                await viewModel.upgradeAllOutdatedNpm()
+                await viewModel.upgradeAllOutdatedBrew()
             }
-        }) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(tint.opacity(0.12))
-                        .frame(width: 26, height: 26)
-                    Image(systemName: symbol)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(tint)
-                }
-                
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    Text("\(count)")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundColor(.primary)
-                }
-                
-                Spacer(minLength: 4)
-                
-                if outdated > 0 {
-                    Text("\(outdated) 待更")
-                        .font(.system(size: 10, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundColor(Theme.warningAmber)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Theme.warningAmber.opacity(0.14))
-                        .clipShape(Capsule())
+        }
+    }
+
+    // MARK: - Notices
+
+    @ViewBuilder
+    private var notices: some View {
+        if viewModel.appUpdateAvailable {
+            notice(
+                title: "DevKeeper \(viewModel.latestAppVersion) 已發布",
+                message: "前往 GitHub 下載新版。",
+                actionTitle: "查看新版"
+            ) {
+                if let url = InputValidator.httpsURL(viewModel.appDownloadUrl, allowedHosts: ["github.com"]) {
+                    NSWorkspace.shared.open(url)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Theme.subtleBorder, lineWidth: 1)
-                    )
+        }
+        if viewModel.vulnerabilityCount > 0 {
+            notice(
+                title: "發現 \(viewModel.vulnerabilityCount) 個已知安全弱點",
+                message: "已安裝的套件有公開的弱點紀錄，建議到安全弱點頁處理。",
+                actionTitle: "查看弱點",
+                danger: true
+            ) {
+                viewModel.selectedTab = .security
+            }
+        }
+    }
+
+    private func notice(title: String, message: String, actionTitle: String, danger: Bool = false,
+                        action: @escaping () -> Void) -> some View {
+        HStack(spacing: DK.Space.m) {
+            VStack(alignment: .leading, spacing: DK.Space.xxs) {
+                Text(title)
+                    .font(DK.Font.bodyMedium)
+                    .foregroundColor(danger ? DK.danger : DK.textPrimary)
+                Text(message)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+            }
+            Spacer(minLength: DK.Space.m)
+            DKButton(actionTitle, action: action)
+        }
+        .dkCard()
+    }
+
+    // MARK: - Metrics
+
+    private var metrics: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DK.Space.s), count: 3), spacing: DK.Space.s) {
+            sourceCard("AI 工具", source: .ai, total: viewModel.aiTools.count, outdated: viewModel.outdatedAIToolCount, tab: .aiTools)
+            sourceCard("npm", source: .npm, total: viewModel.npmPackages.count, outdated: viewModel.outdatedNpmCount, tab: .npm)
+            sourceCard("Python", source: .python, total: viewModel.pythonPackages.count, outdated: viewModel.outdatedPythonCount, tab: .python)
+            sourceCard("Homebrew", source: .homebrew, total: viewModel.brewPackages.count, outdated: viewModel.outdatedBrewCount, tab: .brew)
+            DKMetricCard(
+                title: "資料庫服務",
+                value: "\(viewModel.databaseServices.count)",
+                caption: "已安裝",
+                source: .database,
+                action: { viewModel.selectedTab = .database }
             )
-            .contentShape(Rectangle())
+            DKMetricCard(
+                title: "安全弱點",
+                value: "\(viewModel.vulnerabilityCount)",
+                caption: securityCaption,
+                systemImage: "shield",
+                valueColor: viewModel.vulnerabilityCount > 0 ? DK.danger : DK.textPrimary,
+                action: { viewModel.selectedTab = .security }
+            )
         }
-        .buttonStyle(.bouncy(scale: 0.98))
+    }
+
+    private var securityCaption: String {
+        if viewModel.isAuditingSecurity { return "稽核中…" }
+        if viewModel.vulnerabilityCount > 0 { return "有已知弱點" }
+        switch viewModel.auditState {
+        case .notRun: return "尚未稽核"
+        case .incomplete: return "稽核不完整"
+        case .complete: return "沒有已知弱點"
+        }
+    }
+
+    private func sourceCard(_ title: String, source: DKSource, total: Int, outdated: Int, tab: NavigationTab) -> some View {
+        DKMetricCard(
+            title: title,
+            value: "\(total)",
+            caption: outdated > 0 ? "\(outdated) 項可升級" : (total > 0 ? "全部最新" : nil),
+            source: source,
+            barValue: total > 0 ? Double(outdated) / Double(total) : 0,
+            action: { viewModel.selectedTab = tab }
+        )
+    }
+
+    // MARK: - Outdated list
+
+    private var outdatedSection: some View {
+        VStack(alignment: .leading, spacing: DK.Space.m) {
+            DKSectionTitle(
+                "待升級清單",
+                trailing: outdatedItems.isEmpty ? nil : "顯示 \(filteredOutdatedItems.count) / 共 \(outdatedItems.count) 項"
+            )
+            if !outdatedItems.isEmpty {
+                filters
+            }
+            list
+        }
+    }
+
+    private var filters: some View {
+        HStack(spacing: DK.Space.s) {
+            DKDropdown(options: [
+                (CategoryFilter.all, "全部來源"), (.npm, "npm"), (.python, "Python"), (.brew, "Homebrew")
+            ], selection: $filterCategory)
+            DKDropdown(options: [
+                (ScopeFilter.all, "全部幅度"), (.major, "主要版本"), (.minor, "次要版本"), (.patch, "修補版本")
+            ], selection: $filterScope)
+            DKDropdown(options: [
+                (SortOption.outdatedness, "落後最多優先"), (.name, "名稱"), (.type, "來源")
+            ], selection: $sortOption, label: "排序")
+            if isFiltering {
+                DKButton("重設", kind: .ghost) {
+                    filterCategory = .all
+                    filterScope = .all
+                    sortOption = .outdatedness
+                    searchKeyword = ""
+                }
+            }
+            Spacer(minLength: DK.Space.s)
+            DKSearchField(placeholder: "搜尋待升級套件", text: $searchKeyword)
+        }
+    }
+
+    @ViewBuilder
+    private var list: some View {
+        if outdatedItems.isEmpty {
+            if viewModel.lastScanDate == nil {
+                if viewModel.isScanning {
+                    DKEmptyState(kind: .loading, title: "正在檢查本機套件…")
+                        .dkCard(padding: 0)
+                } else {
+                    DKEmptyState(kind: .idle, title: "尚未檢查", message: "檢查後會在這裡列出可升級的套件。",
+                                 actionTitle: "重新檢查", action: { Task { await viewModel.scanAll() } })
+                        .dkCard(padding: 0)
+                }
+            } else {
+                DKEmptyState(kind: .allCurrent, title: "全部都是最新版本",
+                             message: "npm、Python 與 Homebrew 沒有待升級的項目。")
+                    .dkCard(padding: 0)
+            }
+        } else if filteredOutdatedItems.isEmpty {
+            DKEmptyState(kind: .empty, title: "沒有符合條件的項目", message: "調整篩選條件或清除搜尋文字。")
+                .dkCard(padding: 0)
+        } else {
+            VStack(spacing: DK.Space.s) {
+                ForEach(filteredOutdatedItems) { package in
+                    PackageRow(
+                        package: package,
+                        isActionRunning: viewModel.currentActionPackageId == package.id && viewModel.isActionRunning,
+                        onUpgrade: { Task { await viewModel.upgradeSingle(package: package) } },
+                        onCleanUninstall: { Task { await viewModel.cleanUninstall(package: package) } }
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Environment
+
+    private var environment: some View {
+        VStack(alignment: .leading, spacing: DK.Space.m) {
+            DKSectionTitle("執行環境")
+            HStack(alignment: .top, spacing: DK.Space.xl) {
+                envItem("Node.js", viewModel.systemInfo.nodeVersion,
+                        detail: Self.installSource(path: viewModel.systemInfo.nodePath),
+                        update: brewUpdate(named: "node"))
+                envItem("npm", viewModel.systemInfo.npmVersion,
+                        detail: Self.installSource(path: viewModel.systemInfo.npmPath),
+                        update: viewModel.npmPackages.first { $0.name == "npm" }.flatMap(updateText))
+                envItem("Python", viewModel.systemInfo.pythonVersion,
+                        detail: currentPythonSource,
+                        update: currentPythonFormula.flatMap { brewUpdate(named: $0) })
+                envItem("Homebrew", viewModel.systemInfo.brewVersion, detail: nil, update: nil)
+                Spacer(minLength: 0)
+            }
+            .dkCard()
+        }
     }
     
-    private func envBadge(label: String, value: String) -> some View {
-        HStack(spacing: 5) {
-            Text(label + ":")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
+    private func updateText(_ package: PackageItem) -> String? {
+        guard package.status.isOutdated, let latest = package.latestVersion else { return nil }
+        return "可升級至 \(latest)"
+    }
+    
+    /// Update text for a Homebrew formula, only when that formula is the installed one.
+    private func brewUpdate(named name: String) -> String? {
+        viewModel.brewPackages.first { $0.type == .brewFormula && $0.name == name }.flatMap(updateText)
+    }
+    
+    private var currentPython: PythonInterpreter? {
+        viewModel.pythonInterpreters.first { $0.path == viewModel.selectedPythonPath }
+    }
+    
+    private var currentPythonSource: String? { currentPython?.source.rawValue }
+    
+    /// The Homebrew formula behind the interpreter in use, e.g. `python@3.11`.
+    private var currentPythonFormula: String? {
+        guard let python = currentPython, python.source == .homebrew else { return nil }
+        return "python@\(python.minorVersion)"
+    }
+    
+    /// Names the tool that installed a binary, from its path.
+    private static func installSource(path: String) -> String? {
+        guard !path.isEmpty else { return nil }
+        if path.contains("/.nvm/") { return "nvm" }
+        if path.contains("/.fnm/") || path.contains("/fnm_multishells/") { return "fnm" }
+        if path.hasPrefix("/opt/homebrew/") || path.hasPrefix("/usr/local/") { return "Homebrew" }
+        if path.hasPrefix("/usr/bin/") { return "系統內建" }
+        return nil
+    }
+    
+    private func envItem(_ label: String, _ value: String, detail: String?, update: String?) -> some View {
+        VStack(alignment: .leading, spacing: DK.Space.xxs) {
+            Text(label)
+                .font(DK.Font.caption)
+                .foregroundColor(DK.textTertiary)
             Text(value.isEmpty ? "未安裝" : value)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(.primary)
+                .font(DK.Font.mono)
+                .foregroundColor(DK.textPrimary)
+                .lineLimit(1)
+            if let detail {
+                Text(detail)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textTertiary)
+            }
+            if let update {
+                Text(update)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.accent)
+            }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(Color.white.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     
-    private var dateFormatter: DateFormatter {
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter
-    }
+    }()
 }

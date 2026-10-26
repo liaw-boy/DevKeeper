@@ -10,14 +10,7 @@ public struct SecurityAuditView: View {
     @State private var searchKeyword: String = ""
     @State private var copiedFixCommandId: String? = nil
     @State private var locallyFixedGroupIds: Set<String> = []
-    @State private var pendingRemediation: PendingRemediation? = nil
-    
-    struct PendingRemediation: Identifiable {
-        let plan: RemediationPlan
-        let groupId: String
-        let key: String
-        var id: String { key }
-    }
+    @Environment(\.dkOverlay) private var overlay
     
     enum SeverityFilter: String, CaseIterable, Identifiable {
         case all = "全部等級"
@@ -74,10 +67,6 @@ public struct SecurityAuditView: View {
         }
     }
     
-    private var remediationDialogShown: Binding<Bool> {
-        Binding(get: { pendingRemediation != nil }, set: { if !$0 { pendingRemediation = nil } })
-    }
-    
     private func remediationMessage(_ plan: RemediationPlan) -> String {
         var lines: [String] = []
         if plan.kind == .migrate {
@@ -97,745 +86,304 @@ public struct SecurityAuditView: View {
     }
     
     public var body: some View {
-        content
-            .sheet(item: Binding(get: { viewModel.pendingBatch }, set: { viewModel.pendingBatch = $0 })) { batch in
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                VStack(alignment: .leading, spacing: DK.Space.m) {
+                    filterBar
+                    statusSection
+                    fixProgress
+                    groupList
+                }
+                .padding(.horizontal, DK.pagePadding)
+                .padding(.bottom, DK.pagePadding)
+            }
+        }
+        .background(DK.background)
+        // A new audit replaces the list, so cards marked as fixed earlier must not stay hidden.
+        .onChange(of: viewModel.isAuditingSecurity) { _, running in
+            if !running { locallyFixedGroupIds = [] }
+        }
+        .onChange(of: viewModel.pendingBatch?.id) { _, id in
+            guard id != nil, let batch = viewModel.pendingBatch else { return }
+            // The panel owns the batch from here on, so a dismissed panel does not leave it pending.
+            viewModel.pendingBatch = nil
+            overlay?.present {
                 RemediationBatchSheet(
                     batch: batch,
-                    onConfirm: { Task { await viewModel.runBatch(batch) } },
-                    onCancel: { viewModel.pendingBatch = nil }
+                    onConfirm: {
+                        overlay?.dismissModal()
+                        Task { await viewModel.runBatch(batch) }
+                    },
+                    onCancel: { overlay?.dismissModal() }
                 )
             }
-            .confirmationDialog(
-                pendingRemediation.map { $0.plan.kind == .migrate ? "要把 \($0.plan.packageName) 所屬的工具搬到獨立環境嗎？" : "要移除 \($0.plan.packageName) 嗎？" } ?? "",
-                isPresented: remediationDialogShown,
-                titleVisibility: .visible,
-                presenting: pendingRemediation
-            ) { pending in
-                Button(pending.plan.kind == .migrate ? "確認搬移" : "確認移除", role: .destructive) {
-                    Task { await viewModel.executeRemediation(pending.plan, groupId: pending.groupId, key: pending.key) }
-                }
-                Button("取消", role: .cancel) {}
-            } message: { pending in
-                Text(remediationMessage(pending.plan))
-            }
+        }
     }
     
-    private var content: some View {
-        VStack(spacing: 0) {
-            // Header
-            headerBar
-            
-            Divider()
-                .background(Theme.subtleBorder)
-            
-            // Filter Bar
-            filterBar
-            
-            Divider()
-                .background(Theme.subtleBorder)
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Security Health Banner
-                    if viewModel.vulnerabilities.isEmpty {
-                        cleanHealthBanner
-                        ignoredNotice
-                    } else {
-                        vulnerabilitiesDetectedBanner
-                        fixProgressBar
-                        ignoredNotice
-                    }
-                    
-                    // Vulnerability List (Consolidated One Card per Package)
-                    if !filteredGroups.isEmpty {
-                        VStack(spacing: 12) {
-                            ForEach(filteredGroups) { group in
-                                vulnerabilityGroupCard(group: group)
-                                    .transition(
-                                        .asymmetric(
-                                            insertion: .opacity.combined(with: .scale(scale: 0.98)),
-                                            removal: .scale(scale: 0.92, anchor: .center)
-                                                .combined(with: .opacity)
-                                                .combined(with: .offset(x: 35))
-                                        )
-                                    )
-                            }
-                        }
-                    } else if !viewModel.vulnerabilities.isEmpty {
-                        HStack {
-                            Spacer()
-                            Text("沒有符合當前篩選條件的弱點項目")
-                                .font(.system(size: 12.5))
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 30)
-                            Spacer()
-                        }
+    // MARK: - Header and filters
+    
+    private var header: some View {
+        DKPageHeader(
+            "安全弱點",
+            subtitle: "用 Google OSV 比對已安裝的 npm 與 Python 套件",
+            count: viewModel.vulnerabilities.isEmpty
+                ? nil
+                : "\(viewModel.groupedVulnerabilities.count) 個套件、\(uniqueVulnerabilityCount) 個弱點"
+        ) {
+            DKActionMenu(help: "更多稽核選項", items: [
+                .init(title: "稽核特定專案資料夾…", action: selectAndScanProjectFolder)
+            ])
+            DKButton("全面稽核", systemImage: "shield.lefthalf.filled", isLoading: viewModel.isAuditingSecurity) {
+                Task { await viewModel.scanSecurityAudit() }
+            }
+            .disabled(viewModel.isAuditingSecurity)
+            if !viewModel.vulnerabilities.isEmpty {
+                DKButton("修復全部", systemImage: "wrench.and.screwdriver", kind: .primary,
+                         isLoading: viewModel.isFixingAllVulnerabilities,
+                         disabledReason: viewModel.isActionRunning ? "正在執行其他操作" : nil) {
+                    let commands = viewModel.groupedVulnerabilities
+                        .filter { !viewModel.isSystemBuiltIn($0) }
+                        .flatMap(\.fixCommands)
+                    overlay?.confirm(
+                        "修復全部弱點？",
+                        message: "將依序執行以下指令。修不了的套件會另外列出替代做法，確認後才會動作。",
+                        commands: commands,
+                        confirmTitle: "全部修復"
+                    ) {
+                        Task { await viewModel.fixAllVulnerabilities() }
                     }
                 }
-                .padding(24)
+                .disabled(viewModel.isActionRunning)
             }
         }
-        .background(Theme.canvasBackground)
     }
     
-    // MARK: - Header Bar
-    private var headerBar: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Image(systemName: "shield.checkered")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(viewModel.vulnerabilities.isEmpty ? Theme.successGreen : Theme.dangerRed)
-                    
-                    Text("安全弱點稽核 (CVE / OSV)")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    if !viewModel.vulnerabilities.isEmpty {
-                        Text("\(viewModel.groupedVulnerabilities.count) 個套件受影響 (共 \(viewModel.vulnerabilities.count) 個 CVE)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .monospacedDigit()
-                            .foregroundColor(Theme.dangerRed)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2.5)
-                            .background(Theme.dangerRed.opacity(0.15))
-                            .clipShape(Capsule())
-                    }
-                }
-                
-                Text("深度比對 Google OSV 資料庫，全面掃描本機已安裝套件與前後端專案之安全漏洞")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            HStack(spacing: 8) {
-                // Unified Full Security Audit Button
-                Button(action: {
-                    Task { await viewModel.scanSecurityAudit() }
-                }) {
-                    HStack(spacing: 6) {
-                        if viewModel.isAuditingSecurity {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("正在全面稽核安全弱點...")
-                                .font(.system(size: 12, weight: .semibold))
-                        } else {
-                            Image(systemName: "shield.lefthalf.filled")
-                                .font(.system(size: 12, weight: .bold))
-                            Text("全面安全弱點稽核")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(Theme.primaryGradient)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .shadow(color: Theme.primaryIndigo.opacity(0.35), radius: 4, x: 0, y: 1.5)
-                }
-                .buttonStyle(.bouncy(scale: 0.97))
-                .disabled(viewModel.isAuditingSecurity)
-                
-                // Advanced options: Custom folder audit
-                Menu {
-                    Button(action: {
-                        selectAndScanProjectFolder()
-                    }) {
-                        Label("自選特定專案資料夾進行稽核...", systemImage: "folder.badge.gearshape")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.secondary)
-                        .frame(width: 28, height: 28)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("自選特定資料夾進行稽核")
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 18)
-    }
-    
-    // MARK: - Filter Bar
     private var filterBar: some View {
-        HStack(spacing: 8) {
-            // Severity Menu
-            Menu {
-                ForEach(SeverityFilter.allCases) { sev in
-                    Button(action: { filterSeverity = sev }) {
-                        if filterSeverity == sev {
-                            Label(sev.rawValue, systemImage: "checkmark")
-                        } else {
-                            Text(sev.rawValue)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(filterSeverity != .all ? Theme.dangerRed : .secondary)
-                    Text(filterSeverity.rawValue)
-                        .font(.system(size: 11.5, weight: filterSeverity != .all ? .semibold : .medium))
-                        .foregroundColor(filterSeverity != .all ? .white : .primary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.secondary.opacity(0.8))
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background(filterSeverity != .all ? Theme.dangerRed.opacity(0.14) : Color.white.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(filterSeverity != .all ? Theme.dangerRed.opacity(0.4) : Theme.subtleBorder, lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            
-            // Ecosystem Menu
-            Menu {
-                ForEach(EcosystemFilter.allCases) { eco in
-                    Button(action: { filterEcosystem = eco }) {
-                        if filterEcosystem == eco {
-                            Label(eco.rawValue, systemImage: "checkmark")
-                        } else {
-                            Text(eco.rawValue)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "cube")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(filterEcosystem != .all ? Theme.primaryIndigo : .secondary)
-                    Text(filterEcosystem.rawValue)
-                        .font(.system(size: 11.5, weight: filterEcosystem != .all ? .semibold : .medium))
-                        .foregroundColor(filterEcosystem != .all ? .white : .primary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(.secondary.opacity(0.8))
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background(filterEcosystem != .all ? Theme.primaryIndigo.opacity(0.14) : Color.white.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(filterEcosystem != .all ? Theme.primaryIndigo.opacity(0.4) : Theme.subtleBorder, lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            
-            Spacer()
-            
-            // Search Bar (Unified 28pt height)
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                TextField("搜尋套件或 CVE 編號...", text: $searchKeyword)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11.5))
-                if !searchKeyword.isEmpty {
-                    Button(action: { searchKeyword = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 8)
-            .frame(width: 220, height: 28)
-            .background(Color.white.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(Theme.subtleBorder, lineWidth: 1)
-            )
+        HStack(spacing: DK.Space.s) {
+            DKDropdown(options: SeverityFilter.allCases.map { ($0, $0.rawValue) }, selection: $filterSeverity)
+            DKDropdown(options: EcosystemFilter.allCases.map { ($0, $0.rawValue) }, selection: $filterEcosystem)
+            Spacer(minLength: DK.Space.s)
+            DKSearchField(placeholder: "搜尋套件或 CVE 編號", text: $searchKeyword)
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 10)
     }
     
-    // MARK: - Banners
-    private var cleanHealthBanner: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(Theme.successGreen.opacity(0.15))
-                    .frame(width: 42, height: 42)
-                Image(systemName: "shield.checkerboard")
-                    .font(.system(size: 20))
-                    .foregroundColor(Theme.successGreen)
-            }
-            
-            VStack(alignment: .leading, spacing: 3) {
-                Text("目前開發環境未偵測到已知安全性弱點")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.primary)
-                Text("已透過 Google OSV 國際資料庫驗證 npm 與 Python 套件清單，所有套件均無已知 CVE 漏洞。您亦可點擊上方按鈕掃描特定前後端網頁專案。")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-        }
-        .padding(16)
-        .background(Theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Theme.successGreen.opacity(0.3), lineWidth: 1)
-        )
+    // MARK: - Status
+    
+    /// Distinct advisories; the same CVE reported under several GHSA ids or environments counts once.
+    private var uniqueVulnerabilityCount: Int {
+        Set(viewModel.vulnerabilities.map { $0.cveId }).count
     }
     
-    /// Separate progress bar for any running fix, so the buttons themselves never change size or text.
     @ViewBuilder
-    private var fixProgressBar: some View {
+    private var statusSection: some View {
+        if viewModel.vulnerabilities.isEmpty {
+            auditStatusBanner
+        } else {
+            if case .incomplete(let failed) = viewModel.auditState {
+                banner(
+                    symbol: "exclamationmark.triangle", tint: DK.warning,
+                    title: "另有 \(failed) 個套件查詢失敗",
+                    message: "下面的清單可能不完整。",
+                    actionTitle: "重新稽核"
+                ) { Task { await viewModel.scanSecurityAudit() } }
+            }
+        }
+        ignoredNotice
+    }
+    
+    @ViewBuilder
+    private var auditStatusBanner: some View {
+        switch viewModel.auditState {
+        case .complete:
+            banner(symbol: "checkmark.shield", tint: DK.success,
+                   title: "沒有已知弱點",
+                   message: "已用 Google OSV 比對完已安裝的 npm 與 Python 套件，沒有發現公開的弱點紀錄。")
+        case .notRun:
+            banner(symbol: "questionmark.circle", tint: DK.textSecondary,
+                   title: viewModel.isAuditingSecurity ? "正在稽核…" : "尚未稽核",
+                   message: "完成稽核前不會顯示「沒有弱點」。按「全面稽核」開始比對。")
+        case .incomplete(let failed):
+            banner(symbol: "exclamationmark.triangle", tint: DK.warning,
+                   title: "稽核不完整：\(failed) 個套件查詢失敗",
+                   message: "可能是網路中斷或查詢被限流，無法確認這些套件是否有弱點。請確認網路後重新稽核。",
+                   actionTitle: "重新稽核") { Task { await viewModel.scanSecurityAudit() } }
+        }
+    }
+    
+    private func banner(symbol: String, tint: Color, title: String, message: String,
+                        actionTitle: String? = nil, action: (() -> Void)? = nil) -> some View {
+        HStack(spacing: DK.Space.m) {
+            DKIconTile(symbol, size: 32, tint: tint)
+            VStack(alignment: .leading, spacing: DK.Space.xxs) {
+                Text(title)
+                    .font(DK.Font.bodyMedium)
+                    .foregroundColor(DK.textPrimary)
+                Text(message)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: DK.Space.m)
+            if let actionTitle, let action {
+                DKButton(actionTitle, action: action)
+                    .disabled(viewModel.isAuditingSecurity)
+            }
+        }
+        .dkCard()
+    }
+    
+    /// Separate progress for any running fix, so the buttons themselves never change size or text.
+    @ViewBuilder
+    private var fixProgress: some View {
         if viewModel.isActionRunning && (viewModel.isFixingAllVulnerabilities || viewModel.fixingVulnId != nil) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: DK.Space.s) {
                 HStack {
-                    Text(viewModel.actionStage.isEmpty ? "修復中..." : viewModel.actionStage)
-                        .font(.system(size: 11.5, weight: .medium))
+                    Text(viewModel.actionStage.isEmpty ? "修復中…" : viewModel.actionStage)
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Spacer(minLength: 8)
+                    Spacer(minLength: DK.Space.s)
                     Text("\(Int(min(max(viewModel.actionProgress, 0), 1) * 100))%")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .font(DK.Font.caption)
+                        .monospacedDigit()
+                        .foregroundColor(DK.textTertiary)
                 }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.08))
-                        Capsule()
-                            .fill(Theme.primaryGradient)
-                            .frame(width: geo.size.width * CGFloat(min(max(viewModel.actionProgress, 0.04), 1)))
-                            .animation(.easeOut(duration: 0.3), value: viewModel.actionProgress)
-                    }
-                }
-                .frame(height: 6)
+                DKBar(value: min(max(viewModel.actionProgress, 0), 1))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Theme.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Theme.subtleBorder, lineWidth: 1)
-            )
+            .dkCard()
         }
     }
     
     @ViewBuilder
     private var ignoredNotice: some View {
         if viewModel.ignoredCount > 0 {
-            HStack(spacing: 8) {
+            HStack(spacing: DK.Space.s) {
                 Image(systemName: "eye.slash")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: DK.Icon.small))
+                    .foregroundColor(DK.textTertiary)
                 Text("已忽略 \(viewModel.ignoredCount) 個無法修復的已知風險（含系統內建 Python 附的 pip、setuptools、wheel）")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button(action: { Task { await viewModel.restoreIgnoredRisks() } }) {
-                    Text("全部還原")
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                }
-                .buttonStyle(.bouncy)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                Spacer(minLength: DK.Space.s)
+                DKButton("全部還原", kind: .ghost) { Task { await viewModel.restoreIgnoredRisks() } }
             }
         }
     }
     
-    private var vulnerabilitiesDetectedBanner: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "exclamationmark.shield.fill")
-                .font(.system(size: 26))
-                .foregroundColor(Theme.dangerRed)
-            
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text("偵測到 \(viewModel.groupedVulnerabilities.count) 個套件存在安全性弱點 (共 \(viewModel.vulnerabilities.count) 個 CVE 漏洞)")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    Button(action: {
-                        if let url = URL(string: "https://osv.dev") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Text("Google OSV 資料庫")
-                                .font(.system(size: 10.5, weight: .medium))
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 7.5, weight: .bold))
-                        }
-                        .foregroundColor(Theme.primaryIndigo)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
-                        .background(Theme.primaryIndigo.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("造訪 Google OSV (Open Source Vulnerabilities) 官方資料庫首頁")
-                }
-                
-                Text("已為您整合最佳建議修復版本。點擊「🛠 一鍵修復」即可自動升級至安全版本；點擊 CVE 編號可直接開啟 Google OSV 官方漏洞報告。")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            Button(action: {
-                Task {
-                    await viewModel.fixAllVulnerabilities()
-                }
-            }) {
-                HStack(spacing: 6) {
-                    if viewModel.isFixingAllVulnerabilities {
-                        ProgressView().controlSize(.small)
-                        Text("修復中")
-                            .font(.system(size: 12, weight: .semibold))
-                    } else {
-                        Image(systemName: "wrench.and.screwdriver.fill")
-                            .font(.system(size: 11))
-                        Text("一鍵修復所有弱點")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                }
-                .foregroundColor(.white)
-                .frame(width: 150)
-                .padding(.vertical, 7.5)
-                .opacity(viewModel.isFixingAllVulnerabilities ? 0.75 : 1)
-                .background(Theme.dangerRed)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .shadow(color: Theme.dangerRed.opacity(0.35), radius: 4, x: 0, y: 1.5)
-            }
-            .buttonStyle(.bouncy(scale: 0.97))
-            .disabled(viewModel.isActionRunning)
-        }
-        .padding(16)
-        .background(Theme.dangerRed.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Theme.dangerRed.opacity(0.3), lineWidth: 1)
-        )
-    }
+    // MARK: - List
     
-    // MARK: - Vulnerability Group Card (Integrated & Consolidated)
-    /// Version, failure reason and alternative fixes for one environment of a package.
     @ViewBuilder
-    private func targetStatus(group: PackageVulnerabilityGroup, target: FixTarget) -> some View {
-        let key = group.key(for: target.environment)
-        let multi = group.fixTargets.count > 1
-        let prefix = (multi ? target.environment?.label.appending("：") : nil) ?? ""
-        
-        if multi {
-            HStack(spacing: 6) {
-                Text(target.environment?.label ?? "全域")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundColor(Theme.infoCyan)
-                Text(target.currentVersion)
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Theme.dangerRed)
-                if let safe = group.targetSafeVersion {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Theme.successGreen)
-                    Text(safe)
-                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Theme.successGreen)
+    private var groupList: some View {
+        if !filteredGroups.isEmpty {
+            VStack(spacing: DK.Space.s) {
+                ForEach(filteredGroups) { group in
+                    groupCard(group)
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
             }
-        }
-        
-        if let failure = viewModel.fixFailures[key] {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10.5))
-                    .foregroundColor(Theme.warningAmber)
-                Text(prefix + failure)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Button(action: { viewModel.ignoreRisk(group: group, environment: target.environment) }) {
-                    Text("忽略此風險")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                }
-                .buttonStyle(.bouncy)
-                .help("這個版本的 Python 裝不到修復版本。忽略後不再列入警告；升級該套件後會自動重新檢查。")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Theme.warningAmber.opacity(0.10))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-        
-        if let plan = viewModel.remediationPlans[key] {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: plan.kind == .migrate ? "arrow.triangle.branch" : "trash")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.primaryIndigo)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(plan.kind == .migrate
-                         ? "可改為：把 \((plan.toolsToInstall + plan.toolsAlreadyInUV).joined(separator: "、")) 放進 uv 獨立環境"
-                         : "可改為：直接移除（沒有其他套件依賴它）")
-                        .font(.system(size: 11.5, weight: .semibold))
-                    Text("會從 \(plan.interpreterLabel) 清除 \(plan.packagesToRemove.count) 個套件，確認前不會動作")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(.secondary)
-                }
-                Spacer(minLength: 8)
-                Button(action: {
-                    pendingRemediation = PendingRemediation(plan: plan, groupId: group.id, key: key)
-                }) {
-                    Text(plan.kind == .migrate ? "搬到獨立環境" : "移除套件")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5)
-                        .background(Theme.primaryIndigo)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                .buttonStyle(.bouncy)
-                .disabled(viewModel.isActionRunning)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Theme.primaryIndigo.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Theme.primaryIndigo.opacity(0.3), lineWidth: 1)
-            )
-        } else if let note = viewModel.remediationNotes[key] {
-            Text(prefix + note)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+        } else if !viewModel.vulnerabilities.isEmpty {
+            DKEmptyState(kind: .empty, title: "沒有符合條件的弱點", message: "調整篩選條件或清除搜尋文字。")
+                .dkCard(padding: 0)
         }
     }
     
-    private func vulnerabilityGroupCard(group: PackageVulnerabilityGroup) -> some View {
+    private func severityTone(_ severity: VulnerabilitySeverity) -> DKTag.Tone {
+        switch severity {
+        case .critical, .high: return .danger
+        case .medium: return .warning
+        case .low, .unknown: return .neutral
+        }
+    }
+    
+    private func osvLink(_ cve: String) -> some View {
+        Button {
+            if let url = VulnerabilityItem.osvUrl(for: cve) { NSWorkspace.shared.open(url) }
+        } label: {
+            HStack(spacing: DK.Space.xxs) {
+                Text(cve)
+                    .font(DK.Font.mono)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: DK.Icon.tiny))
+            }
+            .foregroundColor(DK.accent)
+        }
+        .buttonStyle(DKPressStyle())
+        .dkTooltip("在 Google OSV 查看 \(cve)")
+    }
+    
+    private func groupCard(_ group: PackageVulnerabilityGroup) -> some View {
         let isFixing = viewModel.isActionRunning && viewModel.fixingVulnId == group.id
         let isCompleted = viewModel.completedPackageId == group.id
+        let builtIn = viewModel.isSystemBuiltIn(group)
         
-        return VStack(alignment: .leading, spacing: 8) {
-            // Tier 1: Identity (Left) vs Primary Fix Action Button (Right)
-            HStack(alignment: .center, spacing: 8) {
-                // Severity Badge
-                Text(group.highestSeverity.localizedName)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(severityColor(group.highestSeverity))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(severityColor(group.highestSeverity).opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                
-                // Package name
+        return VStack(alignment: .leading, spacing: DK.Space.m) {
+            HStack(spacing: DK.Space.s) {
+                DKTag(group.highestSeverity.localizedName, tone: severityTone(group.highestSeverity))
                 Text(group.packageName)
-                    .font(.system(size: 14.5, weight: .bold))
-                    .foregroundColor(.primary)
-                
-                // Ecosystem tag
-                Text(group.ecosystem.uppercased())
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1.5)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                
+                    .font(DK.Font.bodyMedium)
+                    .foregroundColor(DK.textPrimary)
+                DKTag(group.ecosystem.uppercased())
                 ForEach(group.environments, id: \.pythonPath) { env in
-                    Text(env.label)
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundColor(Theme.infoCyan)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Theme.infoCyan.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    DKTag(env.label)
                 }
-                
-                Spacer()
-                
-                // Primary Action Button (Fixed position at Top-Right of Card)
-                if isFixing || isCompleted {
-                    HStack(spacing: 5) {
-                        if isCompleted {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 10.5))
-                            Text("修復完成")
-                                .font(.system(size: 11.5, weight: .semibold))
-                        } else {
-                            ProgressView().controlSize(.small)
-                            Text("修復中")
-                                .font(.system(size: 11.5, weight: .semibold))
-                        }
-                    }
-                    .foregroundColor(isCompleted ? Theme.successGreen : .white)
-                    .frame(width: 84)
-                    .padding(.vertical, 5)
-                    .background(isCompleted ? Theme.successGreen.opacity(0.15) : Theme.primaryIndigo.opacity(0.65))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                } else {
-                    Button(action: {
-                        Task {
-                            if await viewModel.fixVulnerabilityGroup(group: group) {
-                                _ = withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                                    locallyFixedGroupIds.insert(group.id)
-                                }
-                            }
-                        }
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "wrench.and.screwdriver.fill")
-                                .font(.system(size: 10.5))
-                            Text("一鍵修復")
-                                .font(.system(size: 11.5, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .frame(width: 84)
-                        .padding(.vertical, 5)
-                        .background(Theme.primaryIndigo)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .shadow(color: Theme.primaryIndigo.opacity(0.35), radius: 3, x: 0, y: 1)
-                    }
-                    .buttonStyle(.bouncy)
-                    .disabled(viewModel.isActionRunning || group.fixCommand.isEmpty)
-                }
-            }
-            
-            // Tier 2: Security CVE Chips (Left) vs Version Transition Pill (Right - Never wraps!)
-            HStack(alignment: .center, spacing: 8) {
-                // CVE tags (Clickable links to Google OSV database)
-                ForEach(group.cveList.prefix(3), id: \.self) { cve in
-                    Button(action: {
-                        if let url = VulnerabilityItem.osvUrl(for: cve) {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Text(cve)
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 7, weight: .bold))
-                        }
-                        .foregroundColor(Theme.infoCyan)
-                        .padding(.horizontal, 5.5)
-                        .padding(.vertical, 2)
-                        .background(Theme.infoCyan.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("點擊在 Google OSV 安全資料庫中查看 \(cve) 詳細漏洞說明")
-                }
-                if group.cveList.count > 3 {
-                    Menu {
-                        ForEach(group.cveList.dropFirst(3), id: \.self) { cve in
-                            Button("在 Google OSV 查看 \(cve)") {
-                                if let url = VulnerabilityItem.osvUrl(for: cve) {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 2) {
-                            Text("+\(group.cveList.count - 3)")
-                                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 6.5, weight: .bold))
-                        }
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-                
-                Spacer()
-                
-                // Version Transition: Current -> Target Safe Version (Never wraps into 2 lines!)
-                HStack(spacing: 5) {
+                Spacer(minLength: DK.Space.s)
+                HStack(spacing: DK.Space.tight) {
                     Text(group.currentVersion)
-                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundColor(Theme.dangerRed)
-                        .lineLimit(1)
-                    
+                        .font(DK.Font.mono)
+                        .foregroundColor(DK.danger)
                     if let safe = group.targetSafeVersion {
                         Image(systemName: "arrow.right")
-                            .font(.system(size: 8.5, weight: .bold))
-                            .foregroundColor(Theme.successGreen)
-                        
+                            .font(.system(size: DK.Icon.tiny, weight: .semibold))
+                            .foregroundColor(DK.textTertiary)
                         Text(safe)
-                            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                            .monospacedDigit()
-                            .foregroundColor(Theme.successGreen)
-                            .lineLimit(1)
+                            .font(DK.Font.mono)
+                            .foregroundColor(DK.success)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Color.white.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .lineLimit(1)
                 .fixedSize()
+                cardAction(group, isFixing: isFixing, isCompleted: isCompleted, builtIn: builtIn)
             }
             
-            // Tier 3: CVE summaries (with clickable OSV links)
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(group.vulnerabilities.prefix(2)) { v in
-                    HStack(alignment: .top, spacing: 5) {
-                        Button(action: {
-                            if let url = v.osvUrl {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }) {
-                            HStack(spacing: 2) {
-                                Text("• [\(v.cveId)]")
-                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                                Image(systemName: "arrow.up.right")
-                                    .font(.system(size: 7, weight: .bold))
-                            }
-                            .foregroundColor(Theme.infoCyan)
+            if builtIn {
+                Text("這是 Apple 內建的 Python，無法在這裡升級（修復版本需要 Python 3.10 以上）。實際用的程式請改用 Homebrew 或 uv 的 Python，或忽略這項風險。")
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            
+            HStack(spacing: DK.Space.m) {
+                ForEach(group.cveList.prefix(3), id: \.self) { osvLink($0) }
+                if group.cveList.count > 3 {
+                    DKActionMenu(help: "其餘 \(group.cveList.count - 3) 個弱點", items: group.cveList.dropFirst(3).map { cve in
+                        .init(title: "在 Google OSV 查看 \(cve)") {
+                            if let url = VulnerabilityItem.osvUrl(for: cve) { NSWorkspace.shared.open(url) }
                         }
-                        .buttonStyle(.plain)
-                        .help("在 Google OSV 查看 \(v.cveId) 弱點報告")
-                        
+                    })
+                }
+                Spacer(minLength: 0)
+            }
+            
+            VStack(alignment: .leading, spacing: DK.Space.xs) {
+                ForEach(group.vulnerabilities.prefix(2)) { v in
+                    HStack(alignment: .firstTextBaseline, spacing: DK.Space.s) {
+                        Text(v.cveId)
+                            .font(DK.Font.mono)
+                            .foregroundColor(DK.textTertiary)
                         Text(v.summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .font(DK.Font.caption)
+                            .foregroundColor(DK.textSecondary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
+                            .dkTooltip(v.summary)
                     }
                 }
                 if group.vulnerabilities.count > 2 {
-                    Text("... 以及其他 \(group.vulnerabilities.count - 2) 個關聯漏洞")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary.opacity(0.7))
+                    Text("還有 \(group.vulnerabilities.count - 2) 個相關弱點")
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textTertiary)
                 }
             }
             
@@ -843,63 +391,168 @@ public struct SecurityAuditView: View {
                 targetStatus(group: group, target: target)
             }
             
-            // Tier 4: Interactive Repair Command Chip with 1-click copy
-            if !group.fixCommand.isEmpty {
-            Button(action: {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(group.fixCommands.joined(separator: "\n"), forType: .string)
-                copiedFixCommandId = group.id
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                    if copiedFixCommandId == group.id { copiedFixCommandId = nil }
-                }
-            }) {
-                HStack(spacing: 5) {
-                    Text("$")
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Theme.primaryIndigo)
-                    Text(group.fixCommand)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                    if group.fixCommands.count > 1 {
-                        Text("+\(group.fixCommands.count - 1) 個環境")
-                            .font(.system(size: 9.5))
-                            .foregroundColor(.secondary.opacity(0.8))
-                    }
-                    
-                    Image(systemName: copiedFixCommandId == group.id ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 9))
-                        .foregroundColor(copiedFixCommandId == group.id ? Theme.successGreen : Theme.primaryIndigo)
-                    
-                    if copiedFixCommandId == group.id {
-                        Text("已複製修復指令")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundColor(Theme.successGreen)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2.5)
-                .background(Color.white.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(copiedFixCommandId == group.id ? Theme.successGreen.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .help("點擊複製終端機修復指令：\(group.fixCommand)")
+            if !group.fixCommand.isEmpty, !builtIn {
+                fixCommandButton(group)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isCompleted ? Theme.successGreen.opacity(0.12) : Theme.cardBackground)
-        )
+        .dkCard()
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isCompleted ? Theme.successGreen.opacity(0.6) : Theme.subtleBorder, lineWidth: isCompleted ? 1.5 : 1)
+            RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)
+                .stroke(isCompleted ? DK.success.opacity(0.6) : Color.clear, lineWidth: 1)
         )
+    }
+    
+    @ViewBuilder
+    private func cardAction(_ group: PackageVulnerabilityGroup, isFixing: Bool, isCompleted: Bool, builtIn: Bool) -> some View {
+        if isCompleted {
+            HStack(spacing: DK.Space.xs) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: DK.Icon.small, weight: .semibold))
+                Text("已修復")
+                    .font(DK.Font.caption)
+            }
+            .foregroundColor(DK.success)
+        } else if isFixing {
+            HStack(spacing: DK.Space.s) {
+                DKSpinner(size: 12)
+                Text("修復中…")
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+            }
+        } else if builtIn {
+            DKButton("忽略此風險") {
+                for env in group.environments { viewModel.ignoreRisk(group: group, environment: env) }
+            }
+        } else {
+            DKButton("修復", systemImage: "wrench.and.screwdriver", kind: .primary,
+                     disabledReason: viewModel.isActionRunning ? "正在執行其他操作" : (group.fixCommand.isEmpty ? "沒有可自動執行的修復指令" : nil)) {
+                let commands = group.fixCommands
+                overlay?.confirm(
+                    "修復 \(group.packageName)？",
+                    message: "將執行以下指令，升級到沒有已知弱點的版本。",
+                    commands: commands,
+                    confirmTitle: "修復"
+                ) {
+                    Task {
+                        if await viewModel.fixVulnerabilityGroup(group: group) {
+                            _ = withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                                locallyFixedGroupIds.insert(group.id)
+                            }
+                        }
+                    }
+                }
+            }
+            .disabled(viewModel.isActionRunning || group.fixCommand.isEmpty)
+        }
+    }
+    
+    private func fixCommandButton(_ group: PackageVulnerabilityGroup) -> some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(group.fixCommands.joined(separator: "\n"), forType: .string)
+            copiedFixCommandId = group.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                if copiedFixCommandId == group.id { copiedFixCommandId = nil }
+            }
+        } label: {
+            HStack(spacing: DK.Space.xs) {
+                Text("$ \(group.fixCommand)")
+                    .font(DK.Font.mono)
+                    .foregroundColor(DK.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if group.fixCommands.count > 1 {
+                    Text("+\(group.fixCommands.count - 1) 個環境")
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textTertiary)
+                }
+                Image(systemName: copiedFixCommandId == group.id ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: DK.Icon.tiny))
+                    .foregroundColor(copiedFixCommandId == group.id ? DK.success : DK.textTertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(DKPressStyle())
+        .dkTooltip(copiedFixCommandId == group.id ? "已複製" : "複製修復指令")
+    }
+    
+    /// Version, failure reason and alternative fixes for one environment of a package.
+    @ViewBuilder
+    private func targetStatus(group: PackageVulnerabilityGroup, target: FixTarget) -> some View {
+        let key = group.key(for: target.environment)
+        let multi = group.fixTargets.count > 1
+        let prefix = (multi ? target.environment?.label.appending("：") : nil) ?? ""
+        if multi {
+            HStack(spacing: DK.Space.tight) {
+                Text(target.environment?.label ?? "全域")
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                Text(target.currentVersion)
+                    .font(DK.Font.mono)
+                    .foregroundColor(DK.danger)
+                if let safe = group.targetSafeVersion {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: DK.Icon.tiny, weight: .semibold))
+                        .foregroundColor(DK.textTertiary)
+                    Text(safe)
+                        .font(DK.Font.mono)
+                        .foregroundColor(DK.success)
+                }
+            }
+        }
+        
+        if let failure = viewModel.fixFailures[key] {
+            HStack(alignment: .top, spacing: DK.Space.s) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: DK.Icon.small))
+                    .foregroundColor(DK.warning)
+                Text(prefix + failure)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: DK.Space.s)
+                DKButton("忽略此風險") { viewModel.ignoreRisk(group: group, environment: target.environment) }
+                    .dkTooltip("這個版本的 Python 裝不到修復版本。忽略後不再列入警告；升級該套件後會自動重新檢查。")
+            }
+            .padding(DK.Space.m)
+            .background(RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.surfaceSunken))
+        }
+        
+        if let plan = viewModel.remediationPlans[key] {
+            HStack(spacing: DK.Space.m) {
+                Image(systemName: plan.kind == .migrate ? "arrow.triangle.branch" : "trash")
+                    .font(.system(size: DK.Icon.regular))
+                    .foregroundColor(DK.accent)
+                VStack(alignment: .leading, spacing: DK.Space.xxs) {
+                    Text(plan.kind == .migrate
+                         ? "可改為：把 \((plan.toolsToInstall + plan.toolsAlreadyInUV).joined(separator: "、")) 放進 uv 獨立環境"
+                         : "可改為：直接移除（沒有其他套件依賴它）")
+                        .font(DK.Font.bodyMedium)
+                        .foregroundColor(DK.textPrimary)
+                    Text("會從 \(plan.interpreterLabel) 清除 \(plan.packagesToRemove.count) 個套件，確認前不會動作")
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textSecondary)
+                }
+                Spacer(minLength: DK.Space.s)
+                DKButton(plan.kind == .migrate ? "搬到獨立環境" : "移除套件", kind: plan.kind == .migrate ? .secondary : .danger) {
+                    overlay?.confirm(
+                        plan.kind == .migrate ? "把 \(plan.packageName) 所屬的工具搬到獨立環境？" : "移除 \(plan.packageName)？",
+                        message: remediationMessage(plan),
+                        confirmTitle: plan.kind == .migrate ? "確認搬移" : "確認移除",
+                        destructive: true
+                    ) {
+                        Task { await viewModel.executeRemediation(plan, groupId: group.id, key: key) }
+                    }
+                }
+                .disabled(viewModel.isActionRunning)
+            }
+            .padding(DK.Space.m)
+            .background(RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.surfaceSunken))
+        } else if let note = viewModel.remediationNotes[key] {
+            Text(prefix + note)
+                .font(DK.Font.caption)
+                .foregroundColor(DK.textSecondary)
+        }
     }
     
     private func selectAndScanProjectFolder() {
@@ -914,16 +567,6 @@ public struct SecurityAuditView: View {
             Task {
                 await viewModel.auditLocalProject(at: url)
             }
-        }
-    }
-    
-    private func severityColor(_ severity: VulnerabilitySeverity) -> Color {
-        switch severity {
-        case .critical: return Theme.dangerRed
-        case .high: return Color(red: 0.95, green: 0.4, blue: 0.2)
-        case .medium: return Theme.warningAmber
-        case .low: return Theme.infoCyan
-        case .unknown: return Color.secondary
         }
     }
 }

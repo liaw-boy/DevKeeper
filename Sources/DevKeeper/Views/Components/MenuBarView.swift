@@ -101,7 +101,10 @@ public struct MenuBarView: View {
                 Task { await viewModel.scanAll() }
             }
             .disabled(viewModel.isScanning || viewModel.isActionRunning)
+            // Ghost buttons carry their own horizontal padding; pull the last one out so its label ends on the
+            // same edge as the content below, matching the left side.
             DKButton("主視窗", kind: .ghost) { openMainWindow() }
+                .padding(.trailing, -DK.Space.m)
         }
     }
     
@@ -125,23 +128,36 @@ public struct MenuBarView: View {
                 DKMetricCard(
                     title: "可升級",
                     value: "\(count)",
-                    caption: count > 0 ? nil : "全部都是最新版本",
+                    caption: count > 0 ? nil : "全部最新",
                     systemImage: "arrow.up.circle",
                     barValue: totalPackageCount > 0 ? Double(count) / Double(totalPackageCount) : 0,
+                    captionBelow: true,
                     action: { openTab(.overview) }
                 )
                 DKMetricCard(
                     title: "安全弱點",
                     value: "\(vulnerabilities)",
-                    caption: vulnerabilities > 0 ? nil : "沒有已知弱點",
+                    caption: vulnerabilities > 0 ? nil : securityCaption,
                     systemImage: "shield",
                     valueColor: vulnerabilities > 0 ? DK.danger : DK.textPrimary,
+                    captionBelow: true,
                     action: { openTab(.security) }
                 )
             }
+            // Both cards take the height of the taller one.
+            .fixedSize(horizontal: false, vertical: true)
             if vulnerabilities > 0 {
                 DKSegmentBar(segments: severitySegments)
             }
+        }
+    }
+    
+    private var securityCaption: String {
+        if viewModel.isAuditingSecurity { return "稽核中…" }
+        switch viewModel.auditState {
+        case .notRun: return "尚未稽核"
+        case .incomplete: return "稽核不完整"
+        case .complete: return "無弱點"
         }
     }
     
@@ -235,6 +251,7 @@ public struct MenuBarView: View {
                 Spacer(minLength: 0)
                 DKButton("設定", kind: .ghost) { openTab(.settings) }
                 DKButton("結束", kind: .ghost) { NSApplication.shared.terminate(nil) }
+                    .padding(.trailing, -DK.Space.m)
             }
         }
     }
@@ -266,7 +283,7 @@ private struct CategoryRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: DK.Space.s) {
-                DKSourceBadge(source, size: 22)
+                DKSourceBadge(source, size: 26)
                 VStack(alignment: .leading, spacing: DK.Space.xs) {
                     HStack {
                         Text(title)

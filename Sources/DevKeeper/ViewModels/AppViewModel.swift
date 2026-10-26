@@ -36,6 +36,19 @@ public struct SystemInfo: Sendable {
     public var npmVersion: String = ""
     public var pythonVersion: String = ""
     public var brewVersion: String = ""
+    /// Where the app found `node` and `npm`; shows which install (Homebrew, nvm, ...) the versions belong to.
+    public var nodePath: String = ""
+    public var npmPath: String = ""
+}
+
+/// Whether the vulnerability list can be trusted as "nothing found".
+public enum AuditState: Equatable, Sendable {
+    /// No audit has finished since launch (or results were cleared).
+    case notRun
+    /// Every lookup got an answer.
+    case complete
+    /// Some lookups failed, so a short or empty list may be missing entries.
+    case incomplete(failed: Int)
 }
 
 @MainActor
@@ -47,11 +60,19 @@ public final class AppViewModel: ObservableObject {
     @Published public var brewPackages: [PackageItem] = []
     @Published public var databaseServices: [DatabaseServiceItem] = []
     @Published public var vulnerabilities: [VulnerabilityItem] = []
+    @Published public var auditState: AuditState = .notRun
+    /// Raw results of the last full audit and of each project folder audited by hand, before ignore filters.
+    private var globalAuditVulns: [VulnerabilityItem] = []
+    private var globalAuditFailed = 0
+    private var projectAuditVulns: [String: [VulnerabilityItem]] = [:]
+    private var projectAuditFailed: [String: Int] = [:]
     
     @Published public var isScanning: Bool = false
     @Published public var isAuditingSecurity: Bool = false
     @Published public var isActionRunning: Bool = false
     @Published public var currentActionPackageId: String? = nil
+    /// True while `currentActionPackageId` is being removed rather than upgraded.
+    @Published public var currentActionIsUninstall = false
     @Published public var actionProgress: Double = 0.0
     @Published public var actionStage: String = ""
     @Published public var completedPackageId: String? = nil
@@ -177,12 +198,17 @@ public final class AppViewModel: ObservableObject {
         let pyVer = (try? await ShellExecutor.shared.run(command: "\(PythonRuntime.executable) --version"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
         let brewVer = (try? await ShellExecutor.shared.run(command: "brew --version | head -n 1"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未安裝"
         
+        let nodePath = (try? await ShellExecutor.shared.run(command: "command -v node"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let npmPath = (try? await ShellExecutor.shared.run(command: "command -v npm"))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        
         self.systemInfo = SystemInfo(
             osVersion: os,
             nodeVersion: nodeVer,
             npmVersion: npmVer,
             pythonVersion: pyVer,
-            brewVersion: brewVer
+            brewVersion: brewVer,
+            nodePath: nodePath,
+            npmPath: npmPath
         )
     }
     
@@ -294,29 +320,69 @@ public final class AppViewModel: ObservableObject {
         self.isAuditingSecurity = true
         appendLog("正在啟動全面安全弱點稽核 (Google OSV CVE/GHSA 比對)...")
         
-        var detectedVulns = await AuditEngine.audit(
+        let outcome = await AuditEngine.auditOutcome(
             interpreters: pythonInterpreters,
             npmPackages: npmPackages.map { ($0.name, $0.currentVersion) },
             projectsRoot: UserDefaults.standard.string(forKey: "projectsRootPath")
         )
+        globalAuditVulns = outcome.vulnerabilities
+        globalAuditFailed = outcome.failed
+        applyAuditResults()
+        self.isAuditingSecurity = false
         
+        if outcome.failed > 0 {
+            appendLog("全面安全稽核未完成：\(outcome.failed) / \(outcome.checked) 個套件查詢 OSV 失敗，結果不完整。")
+        } else if !vulnerabilities.isEmpty {
+            appendLog("全面安全稽核完成：偵測到 \(vulnerabilities.count) 個已知安全性弱點 (CVE/GHSA)！")
+        } else {
+            appendLog("全面安全稽核完成：本機套件與開發專案均未發現已知 CVE 弱點。")
+        }
+    }
+    
+    /// Combines the last full audit with the project folders audited by hand, hides ignored risks and built-in
+    /// exceptions, and refreshes the audit state.
+    private func applyAuditResults() {
+        var seen = Set<String>()
+        var combined: [VulnerabilityItem] = []
+        for v in globalAuditVulns + projectAuditVulns.values.flatMap({ $0 }) {
+            let scope = v.environment?.pythonPath ?? v.projectPath ?? ""
+            if seen.insert("\(v.id)|\(v.packageName.lowercased())|\(scope)").inserted { combined.append(v) }
+        }
         let ignored = ignoredKeys
-        let visible = detectedVulns.filter { !ignored.contains(Self.ignoreKey($0)) && !isBuiltInException($0) }
-        self.ignoredCount = detectedVulns.count - visible.count
-        detectedVulns = visible
-        self.vulnerabilities = detectedVulns
+        let visible = combined.filter { !ignored.contains(Self.ignoreKey($0)) && !isBuiltInException($0) }
+        self.ignoredCount = combined.count - visible.count
+        self.vulnerabilities = visible
+        
         // Keep failure reasons only for groups that are still present after the rescan.
         let stillPresent = Set(groupedVulnerabilities.map { $0.id })
         func isCurrent(_ key: String) -> Bool { stillPresent.contains { key.hasPrefix($0 + "|") } }
         self.fixFailures = self.fixFailures.filter { isCurrent($0.key) }
         self.remediationPlans = self.remediationPlans.filter { isCurrent($0.key) }
         self.remediationNotes = self.remediationNotes.filter { isCurrent($0.key) }
-        self.isAuditingSecurity = false
-        if !detectedVulns.isEmpty {
-            appendLog("全面安全稽核完成：偵測到 \(detectedVulns.count) 個已知安全性弱點 (CVE/GHSA)！")
-        } else {
-            appendLog("全面安全稽核完成：本機套件與開發專案均未發現已知 CVE 弱點。")
+        
+        let failed = globalAuditFailed + projectAuditFailed.values.reduce(0, +)
+        auditState = failed > 0 ? .incomplete(failed: failed) : .complete
+    }
+    
+    /// Drops fixed items from the visible list and from the stored results, so a later project audit does not
+    /// bring them back before the next full audit.
+    private func removeFromAuditResults(where shouldRemove: (VulnerabilityItem) -> Bool) {
+        vulnerabilities.removeAll(where: shouldRemove)
+        globalAuditVulns.removeAll(where: shouldRemove)
+        for key in Array(projectAuditVulns.keys) {
+            projectAuditVulns[key]?.removeAll(where: shouldRemove)
         }
+    }
+    
+    /// Forgets every audit result, e.g. when the audit is turned off in Settings.
+    public func clearSecurityResults() {
+        globalAuditVulns = []
+        globalAuditFailed = 0
+        projectAuditVulns = [:]
+        projectAuditFailed = [:]
+        vulnerabilities = []
+        ignoredCount = 0
+        auditState = .notRun
     }
     
     // MARK: - Alternative fixes (remove / move to an isolated environment)
@@ -449,6 +515,17 @@ public final class AppViewModel: ObservableObject {
         return AuditEngine.isBuiltInException(v, interpreters: pythonInterpreters)
     }
     
+    /// True when every environment of the group is the OS-provided Python's own pip/setuptools/wheel, which
+    /// cannot be upgraded from here (the fixed versions need a newer Python than Apple ships).
+    public func isSystemBuiltIn(_ group: PackageVulnerabilityGroup) -> Bool {
+        let name = PythonDependencyGraph.normalize(group.packageName)
+        guard PythonDependencyGraph.baseTooling.contains(name), !group.environments.isEmpty else { return false }
+        return group.environments.allSatisfy { env in
+            env.kind == .interpreter
+                && pythonInterpreters.contains { $0.path == env.pythonPath && $0.source == .system }
+        }
+    }
+    
     /// Hides a package's vulnerabilities in one environment (a known risk that cannot be fixed there).
     public func ignoreRisk(group: PackageVulnerabilityGroup, environment: PythonEnvironmentRef?) {
         let targets = vulnerabilities.filter {
@@ -479,18 +556,31 @@ public final class AppViewModel: ObservableObject {
         isAuditingSecurity = true
         appendLog("正在透過 Google OSV 審查本機網頁專案前後端相依套件安全漏洞: \(url.lastPathComponent)...")
         
-        let projectVulns = await SecurityService.shared.auditProjectDirectory(at: url)
-        if !projectVulns.isEmpty {
-            for v in projectVulns {
-                if !self.vulnerabilities.contains(where: { $0.id == v.id }) {
-                    self.vulnerabilities.append(v)
-                }
-            }
-            appendLog("專案安全稽核完成：在 \(url.lastPathComponent) 偵測到 \(projectVulns.count) 個安全性漏洞！")
+        let outcome = await SecurityService.shared.auditProjectDirectoryOutcome(at: url)
+        projectAuditVulns[url.path] = outcome.vulnerabilities
+        projectAuditFailed[url.path] = outcome.failed
+        // Only a finished full audit makes an empty list trustworthy; a project audit alone must not.
+        if auditState == .notRun {
+            applyAuditResultsKeepingState()
+        } else {
+            applyAuditResults()
+        }
+        
+        if outcome.failed > 0 {
+            appendLog("專案安全稽核未完成：\(url.lastPathComponent) 有 \(outcome.failed) 個套件查詢 OSV 失敗，結果不完整。")
+        } else if !outcome.vulnerabilities.isEmpty {
+            appendLog("專案安全稽核完成：在 \(url.lastPathComponent) 偵測到 \(outcome.vulnerabilities.count) 個安全性漏洞！")
         } else {
             appendLog("專案安全稽核完成：\(url.lastPathComponent) 未偵測到已知安全性弱點。")
         }
         self.isAuditingSecurity = false
+    }
+    
+    /// Updates the visible list from the stored results without claiming that a full audit has run.
+    private func applyAuditResultsKeepingState() {
+        let state = auditState
+        applyAuditResults()
+        auditState = state
     }
     
     /// Runs a fix command and verifies the result by the installed version.
@@ -550,7 +640,7 @@ public final class AppViewModel: ObservableObject {
             case .fixed:
                 appendLog("套件 \(group.packageName)（\(place)）修復完成。")
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
-                    self.vulnerabilities.removeAll {
+                    self.removeFromAuditResults {
                         $0.packageName.lowercased() == group.packageName.lowercased()
                             && $0.projectPath == group.projectPath
                             && $0.environment == target.environment
@@ -626,7 +716,7 @@ public final class AppViewModel: ObservableObject {
         self.completedPackageId = nil
         
         withAnimation {
-            self.vulnerabilities.removeAll { $0.id == item.id }
+            self.removeFromAuditResults { $0.id == item.id }
         }
     }
     
@@ -638,7 +728,7 @@ public final class AppViewModel: ObservableObject {
         self.actionProgress = 0.05
         appendLog("啟動批次修復所有可升級之安全弱點...")
         
-        let groups = groupedVulnerabilities
+        let groups = groupedVulnerabilities.filter { !isSystemBuiltIn($0) }
         let jobs = groups.flatMap { group in group.fixTargets.map { (group, $0) } }
         var fixedCount = 0
         var failedCount = 0
@@ -781,25 +871,50 @@ public final class AppViewModel: ObservableObject {
             
             self.pythonPackages = items
             
-            // Second pass: fetch package description and homepage for genuinely outdated items
-            let outdatedItems = items.filter { $0.status.isOutdated }
-            await withTaskGroup(of: (String, String?, String?).self) { group in
-                for item in outdatedItems.prefix(30) {
-                    group.addTask {
-                        let info = await PythonService.shared.checkLatestVersion(for: item.name)
-                        return (item.name, info.description, info.homepage)
-                    }
-                }
-                
-                for await (name, desc, home) in group {
-                    if let index = self.pythonPackages.firstIndex(where: { $0.name == name }) {
-                        self.pythonPackages[index].description = desc
-                        self.pythonPackages[index].homepage = home
-                    }
-                }
+            // Second pass: descriptions and homepages from PyPI, for every package. Answers are cached on disk, so
+            // only packages never seen before are fetched, outdated ones first.
+            var cache = Self.loadPyPICache()
+            applyPyPIInfo(cache)
+            let missing = items.filter { cache[$0.name.lowercased()] == nil }
+                .sorted { ($0.status.isOutdated ? 0 : 1) < ($1.status.isOutdated ? 0 : 1) }
+                .prefix(80)
+                .map(\.name)
+            if !missing.isEmpty {
+                let fetched = await PythonService.shared.fetchPyPIInfo(for: Array(missing))
+                for (name, info) in fetched { cache[name.lowercased()] = info }
+                savePyPICache(cache)
+                applyPyPIInfo(cache)
             }
         } catch {
             appendLog("Python 套件掃描失敗: \(error.localizedDescription)")
+        }
+    }
+    
+    private static let pypiCacheKey = "pypiInfoCache"
+    
+    private static func loadPyPICache() -> [String: PythonService.PyPIInfo] {
+        guard let data = UserDefaults.standard.data(forKey: pypiCacheKey),
+              let cache = try? JSONDecoder().decode([String: PythonService.PyPIInfo].self, from: data) else { return [:] }
+        return cache
+    }
+    
+    /// Keeps the cache from growing without bound: past the cap, entries for packages no longer installed go.
+    private static let pypiCacheLimit = 500
+    
+    private func savePyPICache(_ cache: [String: PythonService.PyPIInfo]) {
+        var kept = cache
+        if kept.count > Self.pypiCacheLimit {
+            let installed = Set(pythonPackages.map { $0.name.lowercased() })
+            kept = kept.filter { installed.contains($0.key) }
+        }
+        if let data = try? JSONEncoder().encode(kept) { UserDefaults.standard.set(data, forKey: Self.pypiCacheKey) }
+    }
+    
+    private func applyPyPIInfo(_ cache: [String: PythonService.PyPIInfo]) {
+        for index in pythonPackages.indices {
+            guard let info = cache[pythonPackages[index].name.lowercased()] else { continue }
+            if pythonPackages[index].description == nil { pythonPackages[index].description = info.summary }
+            if pythonPackages[index].homepage == nil { pythonPackages[index].homepage = info.homepage }
         }
     }
     
@@ -827,6 +942,7 @@ public final class AppViewModel: ObservableObject {
         guard !isActionRunning else { return }
         isActionRunning = true
         currentActionPackageId = package.id
+        currentActionIsUninstall = false
         completedPackageId = nil
         actionProgress = 0.15
         actionStage = "準備更新環境..."
@@ -919,6 +1035,7 @@ public final class AppViewModel: ObservableObject {
         guard !isActionRunning else { return }
         isActionRunning = true
         currentActionPackageId = package.id
+        currentActionIsUninstall = true
         
         appendLog("正在執行乾淨移除: \(package.name)...")
         liveLogOutput = ""
@@ -1052,7 +1169,7 @@ public final class AppViewModel: ObservableObject {
     }
     
     /// Outdated Homebrew formulae and casks shown in the list; only these are upgraded.
-    private var outdatedBrewNames: (formulae: [String], casks: [String]) {
+    public var outdatedBrewNames: (formulae: [String], casks: [String]) {
         let outdated = brewPackages.filter { $0.status.isOutdated }
         return (outdated.filter { $0.type == .brewFormula }.map(\.name), outdated.filter { $0.type == .brewCask }.map(\.name))
     }

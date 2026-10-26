@@ -108,6 +108,13 @@ extension Color {
     }
 }
 
+extension Color {
+    /// A faint overlay that lifts a surface: white in dark mode, black in light mode.
+    static func dkWash(_ opacity: Double) -> Color {
+        Color(light: 0x000000, dark: 0xFFFFFF, lightAlpha: opacity * 0.8, darkAlpha: opacity)
+    }
+}
+
 extension NSColor {
     convenience init(hex: UInt32) {
         self.init(

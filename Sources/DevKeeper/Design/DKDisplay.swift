@@ -519,17 +519,90 @@ struct DKSourceBadge: View {
     }
     
     var body: some View {
-        Text(source.label)
-            .font(.system(size: max(size * 0.36, 8), weight: .bold, design: .rounded))
+        Image(systemName: source.symbol)
+            .font(.system(size: size * 0.5, weight: .medium))
             .foregroundColor(source.colors.text)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
             .frame(width: size, height: size)
             .background(
                 RoundedRectangle(cornerRadius: size >= 24 ? DK.Radius.control : DK.Radius.inner, style: .continuous)
                     .fill(source.colors.background)
             )
             .accessibilityLabel(source.name)
+    }
+}
+
+extension DKSource {
+    /// The glyph shown in badges and used as a package's fallback icon.
+    var symbol: String {
+        switch self {
+        case .npm: return "cube"
+        case .python: return "curlybraces"
+        case .homebrew: return "mug"
+        case .cask: return "macwindow"
+        case .ai: return "sparkles"
+        case .database: return "cylinder.split.1x2"
+        }
+    }
+    
+    /// The hue used for this source's badge and dot.
+    var tint: Color { colors.text }
+}
+
+/// A package's own avatar: its first letter on a soft tint chosen from the name, so every package looks different
+/// and stays the same between launches. A small dot at the corner marks the source.
+struct DKPackageAvatar: View {
+    let name: String
+    let source: DKSource
+    var size: CGFloat = 32
+    
+    /// First matching keyword wins, so list the specific ones first.
+    private static let rules: [(keys: [String], symbol: String)] = [
+        (["sql", "postgres", "mongo", "redis", "maria", "mysql", "duckdb", "sqlite"], "cylinder.split.1x2"),
+        (["ssl", "openssl", "libressl", "tls", "crypt", "gpg", "gnupg", "openssh", "keychain", "cert", "pass"], "lock.shield"),
+        (["git", "gh", "lazygit", "hub"], "arrow.triangle.branch"),
+        (["docker", "podman", "kube", "helm", "colima", "container"], "shippingbox"),
+        (["ffmpeg", "video", "vlc", "mpv", "x264", "x265", "handbrake"], "film"),
+        (["image", "png", "jpeg", "jpg", "webp", "pillow", "vips", "magick", "svg", "cairo"], "photo"),
+        (["audio", "sound", "lame", "flac", "opus", "sox", "music"], "waveform"),
+        (["curl", "wget", "http", "request", "axios", "nghttp", "aiohttp", "urllib", "dns", "nmap", "ssh"], "network"),
+        (["eslint", "prettier", "lint", "ruff", "black", "flake", "mypy", "pylint", "format", "stylelint"], "checkmark.seal"),
+        (["test", "jest", "mocha", "vitest", "pytest", "playwright", "puppeteer", "cypress", "selenium"], "testtube.2"),
+        (["typescript", "babel", "webpack", "vite", "rollup", "esbuild", "tsc", "swc", "parcel", "turbo", "build", "cmake", "make", "ninja", "gcc", "llvm"], "hammer"),
+        (["numpy", "pandas", "scipy", "matplotlib", "torch", "tensor", "sklearn", "scikit", "jupyter", "notebook", "polars"], "chart.xyaxis.line"),
+        (["openai", "anthropic", "claude", "gemini", "llm", "langchain", "ollama", "transformers", "codex", "copilot", "gpt"], "sparkles"),
+        (["node", "deno", "bun", "python", "ruby", "go", "rust", "java", "php", "perl", "lua", "swift", "kotlin", "pyenv", "nvm", "fnm", "rbenv", "uv", "pip", "pipx", "pnpm", "yarn", "npm", "cargo"], "chevron.left.forwardslash.chevron.right"),
+        (["vim", "nvim", "neovim", "emacs", "nano", "code", "editor", "studio", "zed"], "pencil.and.outline"),
+        (["zsh", "bash", "fish", "tmux", "shell", "starship", "fzf", "ripgrep", "bat", "eza", "htop", "btop", "jq", "tree", "terminal", "iterm", "warp", "ghostty", "alacritty", "kitty"], "terminal"),
+        (["zip", "tar", "gzip", "bzip", "xz", "zstd", "lz4", "7z", "unrar", "archive", "brotli"], "archivebox"),
+        (["font"], "textformat"),
+        (["browser", "chrome", "firefox", "brave", "safari", "arc", "edge"], "globe"),
+        (["slack", "discord", "zoom", "telegram", "whatsapp", "signal", "mail", "teams", "chat"], "bubble.left.and.bubble.right"),
+        (["cloud", "aws", "azure", "gcloud", "terraform", "ansible", "vercel", "netlify", "firebase", "supabase", "wrangler"], "cloud"),
+        (["json", "yaml", "toml", "xml", "csv", "markdown", "pandoc", "protobuf"], "doc.text"),
+        (["server", "nginx", "apache", "caddy", "express", "flask", "django", "fastapi", "uvicorn", "gunicorn"], "server.rack"),
+    ]
+    
+    private var symbol: String {
+        let key = name.lowercased()
+        // Match whole words first so "go" does not light up "mongo" or "gopls".
+        let words = Set(key.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        for rule in Self.rules where rule.keys.contains(where: { words.contains($0) }) { return rule.symbol }
+        for rule in Self.rules where rule.keys.contains(where: { $0.count > 3 && key.contains($0) }) { return rule.symbol }
+        return source.symbol
+    }
+    
+    var body: some View {
+        let colors = source.colors
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.46, weight: .medium))
+            .foregroundColor(colors.text)
+            .frame(width: size, height: size)
+            .background(
+                RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
+                    .fill(colors.background)
+            )
+            .accessibilityLabel("\(name)，\(source.name)")
+            .dkTooltip(source.name)
     }
 }
 
@@ -588,39 +661,51 @@ struct DKMetricCard: View {
     var source: DKSource?
     var barValue: Double?
     var valueColor: Color = DK.textPrimary
+    /// Puts the caption on its own line under the number, for narrow cards where it would be cut off.
+    var captionBelow = false
     var action: (() -> Void)?
     @State private var isHovering = false
     
     var body: some View {
         let content = VStack(alignment: .leading, spacing: DK.Space.s) {
-            HStack(spacing: DK.Space.s) {
+            HStack(spacing: DK.Space.m) {
                 if let source {
-                    DKSourceBadge(source, size: 22)
+                    DKSourceBadge(source, size: 28)
                 } else if let systemImage {
-                    DKIconTile(systemImage, size: 22)
+                    DKIconTile(systemImage, size: 28)
                 }
-                Text(title)
-                    .font(DK.Font.caption)
-                    .foregroundColor(DK.textSecondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title)
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textSecondary)
+                        .lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: DK.Space.xs) {
+                        Text(value)
+                            .font(.system(size: 22, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundColor(valueColor)
+                            .lineLimit(1)
+                        if let caption, !captionBelow {
+                            Text(caption)
+                                .font(DK.Font.caption)
+                                .foregroundColor(DK.textTertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if let caption, captionBelow {
+                        Text(caption)
+                            .font(DK.Font.caption)
+                            .foregroundColor(DK.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 0)
-            }
-            Text(value)
-                .font(DK.Font.display)
-                .monospacedDigit()
-                .foregroundColor(valueColor)
-                .lineLimit(1)
-            if let caption {
-                Text(caption)
-                    .font(DK.Font.caption)
-                    .foregroundColor(DK.textTertiary)
-                    .lineLimit(1)
             }
             if let barValue {
                 DKBar(value: barValue)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .dkCard()
         .overlay(
             RoundedRectangle(cornerRadius: DK.Radius.card, style: .continuous)

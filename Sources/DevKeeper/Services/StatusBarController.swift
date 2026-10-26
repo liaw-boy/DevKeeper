@@ -109,8 +109,13 @@ public final class StatusBarController: NSObject {
         let panel = MenuBarPanel(size: size)
         panel.contentView = hosting
         panel.onCancel = { [weak self] in self?.closePanel() }
-        // Follows the main window, which is dark until the appearance setting lands.
-        panel.appearance = NSAppearance(named: .darkAqua)
+        // Follows the appearance setting; nil means the system's.
+        let preference = DKAppearance(rawValue: UserDefaults.standard.string(forKey: DKAppearance.storageKey) ?? "") ?? .system
+        switch preference {
+        case .system: panel.appearance = nil
+        case .light: panel.appearance = NSAppearance(named: .aqua)
+        case .dark: panel.appearance = NSAppearance(named: .darkAqua)
+        }
         
         let buttonRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let visible = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame ?? .zero
