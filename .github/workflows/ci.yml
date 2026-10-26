@@ -44,7 +44,8 @@ jobs:
           .build/release/devkeeper-cli python list
           .build/release/devkeeper-cli scan
           .build/release/devkeeper-cli scan --json > scan.json
-          .build/release/devkeeper-cli audit --json > audit.json || test $? -eq 1
+          # Exit 1 means vulnerabilities were found, 3 means some OSV lookups failed (network); both are fine here.
+          .build/release/devkeeper-cli audit --json > audit.json || { code=$?; test $code -eq 1 -o $code -eq 3; }
           head -c 400 scan.json
       # The Swift image has no Python; install the distribution's own to exercise interpreter discovery,
       # PEP 668 detection and the distro-bundled package exclusion.
@@ -55,7 +56,7 @@ jobs:
           .build/release/devkeeper-cli python list
           .build/release/devkeeper-cli python list --json
           .build/release/devkeeper-cli scan
-          .build/release/devkeeper-cli audit --all || test $? -eq 1
+          .build/release/devkeeper-cli audit --all || { code=$?; test $code -eq 1 -o $code -eq 3; }
       # The local web interface: it must answer with the token and refuse without it.
       - name: Web interface smoke test
         run: |
