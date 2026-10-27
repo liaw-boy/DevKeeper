@@ -160,7 +160,7 @@ public final class BrewService: Sendable {
     
     public func upgrade(formulae: [String], casks: [String]) -> AsyncStream<String> {
         guard let commands = Self.upgradeCommands(formulae: formulae, casks: casks), !commands.isEmpty else {
-            return ShellExecutor.shared.rejectedStream(reason: "沒有可升級的項目，或套件名稱含不允許的字元")
+            return ShellExecutor.shared.rejectedStream(reason: "沒有可更新的項目，或套件名稱含不允許的字元")
         }
         return ShellExecutor.shared.stream(command: commands.joined(separator: "; "))
     }

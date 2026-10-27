@@ -28,21 +28,21 @@ private struct GalleryColumn: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DK.Space.xl) {
-                DKPageHeader("npm 套件", subtitle: "全域安裝的 npm 套件與可升級的版本", count: "42 個") {
+                DKPageHeader("npm 套件", subtitle: "全域安裝的 npm 套件與可更新的版本", count: "42 個") {
                     DKButton("檢查") {}
-                    DKButton("全部升級", kind: .primary) {}
+                    DKButton("全部更新", kind: .primary) {}
                 }
                 .padding(.horizontal, -DK.pagePadding)
                 
                 group("按鈕") {
                     HStack(spacing: DK.Space.s) {
-                        DKButton("升級", kind: .primary) {}
+                        DKButton("更新", kind: .primary) {}
                         DKButton("檢查") {}
                         DKButton("移除", kind: .danger) {}
                         DKButton("取消", kind: .ghost) {}
                     }
                     HStack(spacing: DK.Space.s) {
-                        DKButton("升級中", kind: .primary, isLoading: true) {}
+                        DKButton("更新中", kind: .primary, isLoading: true) {}
                         DKButton("檢查", disabledReason: "正在執行其他操作") {}.disabled(true)
                         DKIconButton("arrow.clockwise", help: "重新檢查") {}
                             .dkTrackFrame($iconFrame)
@@ -56,8 +56,8 @@ private struct GalleryColumn: View {
                 group("輸入與選擇") {
                     HStack(spacing: DK.Space.s) {
                         DKSearchField(placeholder: "搜尋套件", text: $search)
-                        DKSegmented(options: [(0, "全部"), (1, "可升級")], selection: $filter)
-                        DKDropdown(options: [("name", "名稱"), ("scope", "升級幅度")], selection: $sort, label: "排序")
+                        DKSegmented(options: [(0, "全部"), (1, "可更新")], selection: $filter)
+                        DKDropdown(options: [("name", "名稱"), ("scope", "更新幅度")], selection: $sort, label: "排序")
                             .dkTrackFrame($sortFrame)
                     }
                     HStack(spacing: DK.Space.l) {
@@ -94,7 +94,7 @@ private struct GalleryColumn: View {
                         DKSourceBadge(.database)
                         DKIconTile("shield")
                         DKButton("檢查", systemImage: "arrow.clockwise") {}
-                        DKButton("升級", systemImage: "arrow.up.circle", kind: .primary) {}
+                        DKButton("更新", systemImage: "arrow.up.circle", kind: .primary) {}
                     }
                     HStack(spacing: DK.Space.s) {
                         DKPackageAvatar(name: "openssl@4", source: .homebrew)
@@ -105,7 +105,7 @@ private struct GalleryColumn: View {
                         DKPackageAvatar(name: "unknown-tool", source: .cask)
                     }
                     HStack(alignment: .top, spacing: DK.Space.s) {
-                        DKMetricCard(title: "可升級", value: "12", caption: "共 42 個套件", systemImage: "arrow.up.circle", barValue: 12.0 / 42)
+                        DKMetricCard(title: "可更新", value: "12", caption: "共 42 個套件", systemImage: "arrow.up.circle", barValue: 12.0 / 42)
                         DKMetricCard(title: "npm", value: "5", source: .npm, barValue: 0.25)
                         DKMetricCard(title: "安全弱點", value: "3", systemImage: "shield", valueColor: DK.danger)
                     }
@@ -137,7 +137,7 @@ private struct GalleryColumn: View {
                 }
                 
                 group("狀態頁與確認") {
-                    DKEmptyState(kind: .allCurrent, title: "全部都是最新版本", message: "沒有需要升級的 npm 套件。")
+                    DKEmptyState(kind: .allCurrent, title: "全部都是最新版本", message: "沒有需要更新的 npm 套件。")
                         .dkCard(padding: 0)
                     DKButton("開啟確認面板") {
                         overlay?.confirm("移除 typescript？", message: "只會執行 npm uninstall，不會刪除專案內的設定檔。",
@@ -162,7 +162,7 @@ private struct GalleryColumn: View {
         switch what {
         case "dropdown":
             overlay?.showPanel(anchor: sortFrame, width: max(sortFrame.width, 160)) {
-                DKDropdownPanel(options: [("name", "名稱"), ("scope", "升級幅度"), ("type", "類型")], selection: $sort)
+                DKDropdownPanel(options: [("name", "名稱"), ("scope", "更新幅度"), ("type", "類型")], selection: $sort)
             }
         case "tooltip":
             overlay?.showTip("重新檢查所有 npm 套件的最新版本", anchor: iconFrame)
@@ -170,8 +170,8 @@ private struct GalleryColumn: View {
             overlay?.showTip("這是一段很長的提示文字，用來確認提示框最寬只到 320 點並且會自動換行，而不是撐開整個視窗或跑出畫面之外。" +
                              "第二句話讓內容超過兩行，檢查行數限制與位置是否都在視窗內。", anchor: iconFrame)
         case "longmodal":
-            overlay?.confirm("升級 30 個套件？", message: "以下指令會依序執行。",
-                             commands: (1...30).map { "npm install -g example-package-\($0)@1.2.\($0)" }, confirmTitle: "全部升級") {}
+            overlay?.confirm("更新 30 個套件？", message: "以下指令會依序執行。",
+                             commands: (1...30).map { "npm install -g example-package-\($0)@1.2.\($0)" }, confirmTitle: "全部更新") {}
         case "modaldropdown":
             overlay?.present { GalleryModalWithDropdown() }
         case "confirm":
@@ -196,7 +196,7 @@ private struct GalleryColumn: View {
             Text(current).font(DK.Font.mono).foregroundColor(DK.textSecondary).frame(width: 90, alignment: .leading)
             Text(latest).font(DK.Font.mono).foregroundColor(DK.textPrimary).frame(width: 90, alignment: .leading)
             DKStatusText(status: status).frame(width: 64, alignment: .leading)
-            DKButton("升級") {}
+            DKButton("更新") {}
         }
         .padding(.horizontal, DK.Space.l)
         .padding(.vertical, DK.Space.s)

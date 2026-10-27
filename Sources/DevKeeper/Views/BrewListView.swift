@@ -47,7 +47,7 @@ public struct BrewListView: View {
                          systemImage: showDependencies ? "eye.slash" : "eye", kind: .ghost) {
                     showDependencies.toggle()
                 }
-                .dkTooltip("只因為其他套件需要才裝的套件。預設隱藏；有待升級的仍會顯示。")
+                .dkTooltip("只因為其他套件需要才裝的套件。預設隱藏；有待更新的仍會顯示。")
             }
         }
     }

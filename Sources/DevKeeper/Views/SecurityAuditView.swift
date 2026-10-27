@@ -348,7 +348,7 @@ public struct SecurityAuditView: View {
             }
             
             if builtIn {
-                Text("這是 Apple 內建的 Python，無法在這裡升級（修復版本需要 Python 3.10 以上）。實際用的程式請改用 Homebrew 或 uv 的 Python，或忽略這項風險。")
+                Text("這是 Apple 內建的 Python，無法在這裡更新（修復版本需要 Python 3.10 以上）。實際用的程式請改用 Homebrew 或 uv 的 Python，或忽略這項風險。")
                     .font(DK.Font.caption)
                     .foregroundColor(DK.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -429,7 +429,7 @@ public struct SecurityAuditView: View {
                 let commands = group.fixCommands
                 overlay?.confirm(
                     "修復 \(group.packageName)？",
-                    message: "將執行以下指令，升級到沒有已知弱點的版本。",
+                    message: "將執行以下指令，更新到沒有已知弱點的版本。",
                     commands: commands,
                     confirmTitle: "修復"
                 ) {
@@ -512,7 +512,7 @@ public struct SecurityAuditView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: DK.Space.s)
                 DKButton("忽略此風險") { viewModel.ignoreRisk(group: group, environment: target.environment) }
-                    .dkTooltip("這個版本的 Python 裝不到修復版本。忽略後不再列入警告；升級該套件後會自動重新檢查。")
+                    .dkTooltip("這個版本的 Python 裝不到修復版本。忽略後不再列入警告；更新該套件後會自動重新檢查。")
             }
             .padding(DK.Space.m)
             .background(RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.surfaceSunken))

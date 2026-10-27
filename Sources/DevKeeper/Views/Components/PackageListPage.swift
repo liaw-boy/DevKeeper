@@ -61,7 +61,7 @@ struct PackageListPage<Extra: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 DKPageHeader(title, subtitle: subtitle,
-                             count: outdatedCount > 0 ? "\(outdatedCount) 項可升級" : "\(packages.count) 個\(noun)") {
+                             count: outdatedCount > 0 ? "\(outdatedCount) 項可更新" : "\(packages.count) 個\(noun)") {
                     DKButton("安裝", systemImage: "plus") { viewModel.showInstallSheet = true }
                         .disabled(viewModel.isActionRunning)
                     DKButton("重新檢查", systemImage: "arrow.clockwise", isLoading: viewModel.isScanning) {
@@ -69,13 +69,13 @@ struct PackageListPage<Extra: View>: View {
                     }
                     .disabled(isBusy)
                     if let upgradeAll, outdatedCount > 0 {
-                        DKButton("全部升級（\(outdatedCount)）", kind: .primary,
+                        DKButton("全部更新（\(outdatedCount)）", kind: .primary,
                                  disabledReason: isBusy ? "正在執行其他操作" : nil) {
                             overlay?.confirm(
-                                "升級 \(outdatedCount) 個\(noun)？",
+                                "更新 \(outdatedCount) 個\(noun)？",
                                 message: "將執行以下指令。",
                                 commands: upgradeAll.commands,
-                                confirmTitle: "全部升級"
+                                confirmTitle: "全部更新"
                             ) {
                                 Task { await upgradeAll.action() }
                             }
@@ -101,7 +101,7 @@ struct PackageListPage<Extra: View>: View {
                         DKSearchField(placeholder: "搜尋\(noun)", text: $searchText)
                         Spacer(minLength: DK.Space.s)
                         extraControls
-                        DKSegmented(options: [(false, "全部"), (true, "待升級 \(outdatedCount)")], selection: $onlyOutdated)
+                        DKSegmented(options: [(false, "全部"), (true, "待更新 \(outdatedCount)")], selection: $onlyOutdated)
                     }
                     list
                 }

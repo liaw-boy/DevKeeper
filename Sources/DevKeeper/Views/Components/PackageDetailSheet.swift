@@ -44,7 +44,7 @@ public struct PackageDetailSheet: View {
                 }
                 
                 if package.status.isOutdated, !package.upgradeCommand.isEmpty {
-                    block("升級指令") {
+                    block("更新指令") {
                         HStack(spacing: DK.Space.s) {
                             Text("$ \(package.upgradeCommand)")
                                 .font(DK.Font.mono)
@@ -109,7 +109,7 @@ public struct PackageDetailSheet: View {
             }
             DKButton("關閉") { overlay?.dismissModal() }
             if package.status.isOutdated {
-                DKButton("升級", kind: .primary, disabledReason: viewModel.isActionRunning ? "正在執行其他操作" : nil) {
+                DKButton("更新", kind: .primary, disabledReason: viewModel.isActionRunning ? "正在執行其他操作" : nil) {
                     overlay?.dismissModal()
                     Task { await viewModel.upgradeSingle(package: package) }
                 }

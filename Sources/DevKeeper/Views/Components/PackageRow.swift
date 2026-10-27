@@ -126,7 +126,7 @@ public struct PackageRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(DKPressStyle())
-        .dkTooltip(copiedCommand ? "已複製" : "複製升級指令")
+        .dkTooltip(copiedCommand ? "已複製" : "複製更新指令")
     }
 
     private var versions: some View {
@@ -159,11 +159,11 @@ public struct PackageRow: View {
         } else if isThisRunning || isJustCompleted {
             VStack(alignment: .trailing, spacing: DK.Space.xs) {
                 if isJustCompleted {
-                    Text("升級完成")
+                    Text("更新完成")
                         .font(DK.Font.caption)
                         .foregroundColor(DK.success)
                 } else {
-                    Text(viewModel.actionStage.isEmpty ? "升級中…" : viewModel.actionStage)
+                    Text(viewModel.actionStage.isEmpty ? "更新中…" : viewModel.actionStage)
                         .font(DK.Font.caption)
                         .foregroundColor(DK.textSecondary)
                         .lineLimit(1)
@@ -175,7 +175,7 @@ public struct PackageRow: View {
             HStack(spacing: DK.Space.m) {
                 DKStatusText(status: package.status)
                 if package.status.isOutdated {
-                    DKButton("升級", kind: .primary,
+                    DKButton("更新", kind: .primary,
                              disabledReason: isBusyElsewhere ? "正在執行其他操作" : nil, action: onUpgrade)
                         .disabled(viewModel.isActionRunning || isActionRunning)
                 }

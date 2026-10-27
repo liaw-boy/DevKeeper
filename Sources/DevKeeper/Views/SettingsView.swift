@@ -103,7 +103,7 @@ public struct SettingsView: View {
                     section("系統") {
                         toggleRow(
                             title: "在選單列顯示",
-                            subtitle: "顯示圖示與待升級數量；關閉後仍可從 Dock 開啟主視窗",
+                            subtitle: "顯示圖示與待更新數量；關閉後仍可從 Dock 開啟主視窗",
                             isOn: $showStatusBarItem
                         )
                         DKDivider()

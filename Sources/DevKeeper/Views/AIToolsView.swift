@@ -33,7 +33,7 @@ public struct AIToolsView: View {
                 DKPageHeader(
                     "AI 工具",
                     subtitle: "Claude Code、Codex、OpenCode 等命令列工具的版本",
-                    count: viewModel.outdatedAIToolCount > 0 ? "\(viewModel.outdatedAIToolCount) 項可升級" : "已安裝 \(installedCount) 個"
+                    count: viewModel.outdatedAIToolCount > 0 ? "\(viewModel.outdatedAIToolCount) 項可更新" : "已安裝 \(installedCount) 個"
                 ) {
                     DKButton("重新檢查", systemImage: "arrow.clockwise", isLoading: viewModel.isScanning) {
                         Task { await viewModel.scanAITools() }
@@ -45,7 +45,7 @@ public struct AIToolsView: View {
                     DKSegmented(options: [
                         (FilterMode.all, "全部 \(viewModel.aiTools.count)"),
                         (.installed, "已安裝 \(installedCount)"),
-                        (.outdated, "可升級 \(viewModel.outdatedAIToolCount)")
+                        (.outdated, "可更新 \(viewModel.outdatedAIToolCount)")
                     ], selection: $filterMode)
                     
                     if viewModel.isActionRunning && !viewModel.liveLogOutput.isEmpty {
@@ -160,7 +160,7 @@ public struct AIToolsView: View {
                     }
                 }
                 .lineLimit(1)
-                Text(tool.isOutdated ? "可升級" : "最新版本")
+                Text(tool.isOutdated ? "可更新" : "最新版本")
                     .font(DK.Font.caption)
                     .foregroundColor(tool.isOutdated ? DK.textPrimary : DK.textTertiary)
             } else {
@@ -176,7 +176,7 @@ public struct AIToolsView: View {
         if isRunningThis {
             HStack(spacing: DK.Space.s) {
                 DKSpinner(size: 12)
-                Text(tool.isInstalled ? "升級中…" : "安裝中…")
+                Text(tool.isInstalled ? "更新中…" : "安裝中…")
                     .font(DK.Font.caption)
                     .foregroundColor(DK.textSecondary)
             }
@@ -186,7 +186,7 @@ public struct AIToolsView: View {
             }
             .disabled(viewModel.isActionRunning)
         } else if tool.isOutdated {
-            DKButton("升級", kind: .primary, disabledReason: busyElsewhere ? "正在執行其他操作" : nil) {
+            DKButton("更新", kind: .primary, disabledReason: busyElsewhere ? "正在執行其他操作" : nil) {
                 confirm(tool, install: false)
             }
             .disabled(viewModel.isActionRunning)
@@ -226,10 +226,10 @@ public struct AIToolsView: View {
             ? "這個指令會下載腳本並直接交給 shell 執行，請確認你信任該來源。"
             : "將執行以下指令。"
         overlay?.confirm(
-            "\(install ? "安裝" : "升級") \(tool.name)？",
+            "\(install ? "安裝" : "更新") \(tool.name)？",
             message: message,
             commands: [command],
-            confirmTitle: remote ? "確認並執行" : (install ? "安裝" : "升級"),
+            confirmTitle: remote ? "確認並執行" : (install ? "安裝" : "更新"),
             destructive: remote
         ) {
             Task {

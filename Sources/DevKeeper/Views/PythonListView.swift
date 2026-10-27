@@ -24,7 +24,7 @@ public struct PythonListView: View {
             subtitle: subtitle,
             noun: "Python 套件",
             notice: interpreter?.isExternallyManaged == true
-                ? "這個直譯器受系統套件管理器保護（PEP 668），pip 不允許寫入，所以只能查看，不能升級或移除。"
+                ? "這個直譯器受系統套件管理器保護（PEP 668），pip 不允許寫入，所以只能查看，不能更新或移除。"
                 : nil,
             packages: viewModel.pythonPackages,
             outdatedCount: viewModel.outdatedPythonCount

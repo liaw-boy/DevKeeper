@@ -98,7 +98,7 @@ public struct OverviewView: View {
         DKPageHeader(
             "總覽",
             subtitle: viewModel.lastScanDate.map { "上次檢查 \(Self.dateFormatter.string(from: $0))" } ?? "尚未檢查",
-            count: outdatedItems.isEmpty ? nil : "\(outdatedItems.count) 項可升級"
+            count: outdatedItems.isEmpty ? nil : "\(outdatedItems.count) 項可更新"
         ) {
             DKButton("安裝套件", systemImage: "plus") { viewModel.showInstallSheet = true }
                 .disabled(viewModel.isActionRunning)
@@ -107,7 +107,7 @@ public struct OverviewView: View {
             }
             .disabled(viewModel.isScanning || viewModel.isActionRunning)
             if upgradableCount > 0 {
-                DKButton("升級 npm 與 Homebrew（\(upgradableCount)）", kind: .primary,
+                DKButton("更新 npm 與 Homebrew（\(upgradableCount)）", kind: .primary,
                          disabledReason: viewModel.isActionRunning || viewModel.isScanning ? "正在執行其他操作" : nil) {
                     confirmUpgradeAll()
                 }
@@ -118,10 +118,10 @@ public struct OverviewView: View {
 
     private func confirmUpgradeAll() {
         overlay?.confirm(
-            "升級 \(upgradableCount) 個項目？",
-            message: "只升級清單上的 npm 與 Homebrew 項目。Python 套件與 AI 工具請在各自的頁面升級。",
+            "更新 \(upgradableCount) 個項目？",
+            message: "只更新清單上的 npm 與 Homebrew 項目。Python 套件與 AI 工具請在各自的頁面更新。",
             commands: viewModel.upgradeAllCommands,
-            confirmTitle: "全部升級"
+            confirmTitle: "全部更新"
         ) {
             Task {
                 await viewModel.upgradeAllOutdatedNpm()
@@ -214,7 +214,7 @@ public struct OverviewView: View {
         DKMetricCard(
             title: title,
             value: "\(total)",
-            caption: outdated > 0 ? "\(outdated) 項可升級" : (total > 0 ? "全部最新" : nil),
+            caption: outdated > 0 ? "\(outdated) 項可更新" : (total > 0 ? "全部最新" : nil),
             source: source,
             barValue: total > 0 ? Double(outdated) / Double(total) : 0,
             action: { viewModel.selectedTab = tab }
@@ -226,7 +226,7 @@ public struct OverviewView: View {
     private var outdatedSection: some View {
         VStack(alignment: .leading, spacing: DK.Space.m) {
             DKSectionTitle(
-                "待升級清單",
+                "待更新清單",
                 trailing: outdatedItems.isEmpty ? nil : "顯示 \(filteredOutdatedItems.count) / 共 \(outdatedItems.count) 項"
             )
             if !outdatedItems.isEmpty {
@@ -256,7 +256,7 @@ public struct OverviewView: View {
                 }
             }
             Spacer(minLength: DK.Space.s)
-            DKSearchField(placeholder: "搜尋待升級套件", text: $searchKeyword)
+            DKSearchField(placeholder: "搜尋待更新套件", text: $searchKeyword)
         }
     }
 
@@ -268,13 +268,13 @@ public struct OverviewView: View {
                     DKEmptyState(kind: .loading, title: "正在檢查本機套件…")
                         .dkCard(padding: 0)
                 } else {
-                    DKEmptyState(kind: .idle, title: "尚未檢查", message: "檢查後會在這裡列出可升級的套件。",
+                    DKEmptyState(kind: .idle, title: "尚未檢查", message: "檢查後會在這裡列出可更新的套件。",
                                  actionTitle: "重新檢查", action: { Task { await viewModel.scanAll() } })
                         .dkCard(padding: 0)
                 }
             } else {
                 DKEmptyState(kind: .allCurrent, title: "全部都是最新版本",
-                             message: "npm、Python 與 Homebrew 沒有待升級的項目。")
+                             message: "npm、Python 與 Homebrew 沒有待更新的項目。")
                     .dkCard(padding: 0)
             }
         } else if filteredOutdatedItems.isEmpty {
@@ -318,7 +318,7 @@ public struct OverviewView: View {
     
     private func updateText(_ package: PackageItem) -> String? {
         guard package.status.isOutdated, let latest = package.latestVersion else { return nil }
-        return "可升級至 \(latest)"
+        return "可更新至 \(latest)"
     }
     
     /// Update text for a Homebrew formula, only when that formula is the installed one.

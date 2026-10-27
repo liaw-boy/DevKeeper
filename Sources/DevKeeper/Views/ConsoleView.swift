@@ -16,7 +16,7 @@ public struct ConsoleView: View {
                 "執行日誌",
                 subtitle: viewModel.isActionRunning
                     ? (viewModel.actionStage.isEmpty ? "執行中…" : viewModel.actionStage)
-                    : "安裝、升級、修復與背景檢查的紀錄",
+                    : "安裝、更新、修復與背景檢查的紀錄",
                 count: viewModel.consoleLogs.isEmpty ? nil : "\(viewModel.consoleLogs.count) 行"
             ) {
                 DKButton("複製", systemImage: "doc.on.doc") {
@@ -36,7 +36,7 @@ public struct ConsoleView: View {
             
             Group {
                 if isEmpty {
-                    DKEmptyState(kind: .empty, title: "還沒有紀錄", message: "執行安裝或升級後，輸出會顯示在這裡。")
+                    DKEmptyState(kind: .empty, title: "還沒有紀錄", message: "執行安裝或更新後，輸出會顯示在這裡。")
                         .dkCard(padding: 0)
                 } else {
                     output

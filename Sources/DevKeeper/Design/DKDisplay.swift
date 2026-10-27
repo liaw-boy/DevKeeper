@@ -80,7 +80,7 @@ struct DKStatusText: View {
         case .patch: return "修補版本"
         case .minor: return "次要版本"
         case .major: return "主要版本"
-        case .updateAvailable: return "可升級"
+        case .updateAvailable: return "可更新"
         case .checking: return "檢查中"
         case .error: return "無法取得"
         }

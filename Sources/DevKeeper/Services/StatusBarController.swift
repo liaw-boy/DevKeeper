@@ -88,7 +88,7 @@ public final class StatusBarController: NSObject {
         lastBadgeCount = count
         button.title = count > 0 ? "\(count)" : ""
         button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-        button.setAccessibilityLabel(count > 0 ? "DevKeeper，\(count) 項可升級" : "DevKeeper")
+        button.setAccessibilityLabel(count > 0 ? "DevKeeper，\(count) 項可更新" : "DevKeeper")
     }
     
     // MARK: - Panel

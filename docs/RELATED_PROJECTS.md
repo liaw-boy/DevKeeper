@@ -8,7 +8,7 @@ AI 用量追蹤類（CodexBar、codeburn、headroom-desktop 等）DevKeeper 已�
 | 星數 | 專案 | 重點 | 備註 |
 |---|---|---|---|
 | 26,760 | [Devolutions/UniGetUI](https://github.com/Devolutions/UniGetUI) | 一個介面管 WinGet、Scoop、npm、pip、cargo 等 | Windows 優先，另有 macOS／Linux 版（Avalonia、NativeAOT）；MIT；Devolutions 維護 |
-| 4,700 | [topgrade-rs/topgrade](https://github.com/topgrade-rs/topgrade) | 偵測已裝工具並一次升級全部 | 命令列 |
+| 4,700 | [topgrade-rs/topgrade](https://github.com/topgrade-rs/topgrade) | 偵測已裝工具並一次更新全部 | 命令列 |
 | 2 | [mzored/update-all-mac](https://github.com/mzored/update-all-mac) | Homebrew、App Store、npm、pipx、uv 一鍵更新 | Shell 腳本，星數不足，僅備查 |
 
 ## 2. Homebrew 圖形介面
@@ -19,7 +19,7 @@ AI 用量追蹤類（CodexBar、codeburn、headroom-desktop 等）DevKeeper 已�
 | 5,008 | [brunophilipe/Cakebrew](https://github.com/brunophilipe/Cakebrew) | Objective-C | 2024-01 | 已停更 |
 | 4,710 | [buresdv/Cork](https://github.com/buresdv/Cork) | SwiftUI | 2026-10 | 選單列更新、標籤、區分主動安裝與相依、服務管理、收編手動安裝的 App；預編譯版收費 |
 | 2,845 | [wickenico/WailBrew](https://github.com/wickenico/WailBrew) | Go、Wails、React | 2026-10 | 精簡 Homebrew 介面 |
-| 2,694 | [buo/homebrew-cask-upgrade](https://github.com/buo/homebrew-cask-upgrade) | Ruby | 2026-09 | 命令列，升級過期 Cask |
+| 2,694 | [buo/homebrew-cask-upgrade](https://github.com/buo/homebrew-cask-upgrade) | Ruby | 2026-09 | 命令列，更新過期 Cask |
 
 ## 3. 應用程式更新器（一般 Mac App）
 
@@ -77,7 +77,7 @@ Kegwatch（Homebrew、Cask、App Store、Sparkle 與 Electron 的選單列更新
 ## 對 DevKeeper 的啟發（待決定，尚未納入計畫）
 
 1. Homebrew 預設只列主動安裝的套件（Cork）：已實作。
-2. 勾選後批次升級（Cork）。
+2. 勾選後批次更新（Cork）。
 3. 系統通知（Kegwatch）。
 4. 略過、釘選版本與分組規則（Renovate）。
 5. 收編手動安裝的 App 進 Homebrew（Cork、Kegwatch）。

@@ -192,16 +192,16 @@ public enum FixEngine {
             let list = introduced.sorted().map { "• \($0)" }.joined(separator: "\n")
             let rollback = FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: previous,
                                                      projectPath: nil, environment: environment)
-            await notice("升級到 \(now) 會讓其他套件的版本限制不成立，正在還原為 \(previous)：\(rollback)")
+            await notice("更新到 \(now) 會讓其他套件的版本限制不成立，正在還原為 \(previous)：\(rollback)")
             for await chunk in ShellExecutor.shared.stream(command: rollback) {
                 await output(chunk)
             }
             installed = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
             if installed == previous {
                 result = "rolledBack"
-                outcome = .failed("其他套件限制了 \(packageName) 的版本，無法升級到安全版本，已還原為 \(previous)：\n\(list)")
+                outcome = .failed("其他套件限制了 \(packageName) 的版本，無法更新到安全版本，已還原為 \(previous)：\n\(list)")
             } else {
-                outcome = .failed("升級後出現版本衝突，自動還原失敗，請手動執行：\(rollback)\n\(list)")
+                outcome = .failed("更新後出現版本衝突，自動還原失敗，請手動執行：\(rollback)\n\(list)")
             }
         } else if let target = targetVersion, !target.isEmpty, let now = installed {
             if now.compare(target, options: .numeric) != .orderedAscending {
@@ -209,9 +209,9 @@ public enum FixEngine {
                 outcome = .fixed
             } else if collected.contains("Requires-Python") || collected.contains("No matching distribution") {
                 let py = interpreter.map { "Python \($0.version)" } ?? "Python"
-                outcome = .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(now) 已是此環境能安裝的最新版。請改用較新的 Python 或自行升級。")
+                outcome = .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(now) 已是此環境能安裝的最新版。請改用較新的 Python 或自行更新。")
             } else {
-                outcome = .failed("升級後版本為 \(now)，仍低於安全版本 \(target)。")
+                outcome = .failed("更新後版本為 \(now)，仍低於安全版本 \(target)。")
             }
         } else if lastStatus == 0 {
             result = "fixed"

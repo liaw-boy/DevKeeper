@@ -9,8 +9,8 @@ struct RemediationBatchSheet: View {
     
     var body: some View {
         DKModalPanel(
-            "這些套件無法直接升級，要改用下列做法嗎？",
-            subtitle: "直接升級已先嘗試過。下列做法會先把工具裝好，全部成功後才移除舊的；任何一步失敗都不會動舊環境。",
+            "這些套件無法直接更新，要改用下列做法嗎？",
+            subtitle: "直接更新已先嘗試過。下列做法會先把工具裝好，全部成功後才移除舊的；任何一步失敗都不會動舊環境。",
             width: 520
         ) {
             VStack(alignment: .leading, spacing: DK.Space.s) {

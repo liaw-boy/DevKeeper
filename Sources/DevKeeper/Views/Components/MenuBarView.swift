@@ -126,7 +126,7 @@ public struct MenuBarView: View {
         return VStack(alignment: .leading, spacing: DK.Space.s) {
             HStack(alignment: .top, spacing: DK.Space.s) {
                 DKMetricCard(
-                    title: "可升級",
+                    title: "可更新",
                     value: "\(count)",
                     caption: count > 0 ? nil : "全部最新",
                     systemImage: "arrow.up.circle",
@@ -221,14 +221,14 @@ public struct MenuBarView: View {
     private var footer: some View {
         if confirmingUpgrade {
             VStack(alignment: .leading, spacing: DK.Space.s) {
-                Text("將升級清單上 \(upgradableCount) 個 npm 與 Homebrew 項目，不會升級其他套件。")
+                Text("將更新清單上 \(upgradableCount) 個 npm 與 Homebrew 項目，不會更新其他套件。")
                     .font(DK.Font.caption)
                     .foregroundColor(DK.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: DK.Space.s) {
                     Spacer()
                     DKButton("取消") { confirmingUpgrade = false }
-                    DKButton("確認升級", kind: .primary) {
+                    DKButton("確認更新", kind: .primary) {
                         confirmingUpgrade = false
                         Task {
                             await viewModel.upgradeAllOutdatedNpm()
@@ -243,7 +243,7 @@ public struct MenuBarView: View {
         } else {
             HStack(spacing: DK.Space.s) {
                 if upgradableCount > 0 {
-                    DKButton("升級 npm 與 Homebrew（\(upgradableCount)）") {
+                    DKButton("更新 npm 與 Homebrew（\(upgradableCount)）") {
                         confirmingUpgrade = true
                     }
                     .disabled(viewModel.isActionRunning || viewModel.isScanning)
@@ -290,7 +290,7 @@ private struct CategoryRow: View {
                             .font(DK.Font.body)
                             .foregroundColor(DK.textPrimary)
                         Spacer()
-                        Text(outdated > 0 ? "\(outdated) 可升級" : "最新")
+                        Text(outdated > 0 ? "\(outdated) 可更新" : "最新")
                             .font(DK.Font.caption)
                             .monospacedDigit()
                             .foregroundColor(outdated > 0 ? DK.textPrimary : DK.textTertiary)

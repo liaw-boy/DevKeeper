@@ -62,12 +62,12 @@
 | `DKTextField`、`DKSearchField` | 輸入與搜尋；搜尋比對用 `String.dkSearchKey`（去前後空白、小寫） |
 | `DKSpinner`、`DKProgressBar` | 取代 `ProgressView`；只有真實進度才給數值 |
 | `DKTag` | 標籤：無底色、細邊框，只靠文字顏色區分 |
-| `DKStatusText` | 套件升級狀態，純文字 |
+| `DKStatusText` | 套件更新狀態，純文字 |
 | `.dkCard()`、`DKDivider` | 唯一的卡片樣式與分隔線 |
 | `DKIconTile` | 中性底色的單色圖示方塊 |
 | `DKSourceBadge` | 套件來源（npm、Python、Homebrew、App、AI、資料庫）的柔和來源色圖示方塊，圖示由 `DKSource.symbol` 決定，不使用官方商標圖 |
 | `DKPackageAvatar` | 單一套件的圖示：依名稱關鍵字選 SF Symbol（資料庫、鎖盾、終端機等），沒有對應時用來源預設圖示；底色與來源標章相同 |
-| `DKBar`、`DKSegmentBar` | 比例條（例如可升級／全部）與分段條（弱點依嚴重度） |
+| `DKBar`、`DKSegmentBar` | 比例條（例如可更新／全部）與分段條（弱點依嚴重度） |
 | `DKMetricCard` | 緊湊的數據卡片：來源圖示、標題、數字與說明同一排，可選比例條；內容垂直置中，同排的卡片等高；窄卡片用 `captionBelow` 並讓說明單行 |
 | `DKPageHeader`、`DKSectionTitle` | 頁面標題列與區塊標題 |
 | `DKEmptyState` | 載入中、尚未檢查、沒有資料、全部最新、發生錯誤 |
@@ -80,15 +80,15 @@
 
 ## 頁面結構
 
-- 側邊欄：頂部品牌區（強調色圖示方塊、名稱、待升級數量）；套件頁用來源色圖示方塊，其餘為單色圖示；數量用圓角小標籤，安全弱點只有大於 0 時才變紅。
-- 清單頁（npm、Python、Homebrew）共用 `PackageListPage`：標題列、搜尋與篩選、`PackageRow` 清單。Homebrew 預設隱藏只因相依才安裝的套件，有待升級的仍會顯示。
+- 側邊欄：頂部品牌區（強調色圖示方塊、名稱、待更新數量）；套件頁用來源色圖示方塊，其餘為單色圖示；數量用圓角小標籤，安全弱點只有大於 0 時才變紅。
+- 清單頁（npm、Python、Homebrew）共用 `PackageListPage`：標題列、搜尋與篩選、`PackageRow` 清單。Homebrew 預設隱藏只因相依才安裝的套件，有待更新的仍會顯示。
 - 詳細頁、安裝面板、批次修復確認都用 `DKModalPanel`，由 `overlay?.present` 開啟；不使用系統 sheet 或 `confirmationDialog`。
 - 淺色與深色只透過 `DK` token 與 `Color.dkWash(_:)` 切換；不要寫死 `Color(red:)`、`.white`、`.black` 當背景。主控台輸出區用 `DK.surfaceSunken`。
 - App 圖示（`scripts/generate_icon.swift`）是強調藍的圓角方塊加白色 `shippingbox.fill`，與側邊欄品牌區一致。
 
 ## 文案
 
-- 統一用詞：升級（不用「更新」）、檢查（不用「掃描、同步、重新整理」）、移除（不用「乾淨移除、解除安裝」）、弱點（不用「漏洞」）、登入時啟動（不用「開機」）。
+- 統一用詞：更新（不用「升級」）、檢查（不用「掃描、同步、重新整理」）、移除（不用「乾淨移除、解除安裝」）、弱點（不用「漏洞」）、登入時啟動（不用「開機」）。
 - 嚴重程度：嚴重、高、中、低、未知。
 - 不用：一鍵、立即、全面、深度、國際、次世代、為您、最佳、即時、之、驚嘆號、Emoji。
 - 英文只保留專有名詞（npm、Homebrew、pip、GitHub、OSV、CVE 編號）。

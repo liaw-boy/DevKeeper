@@ -104,7 +104,7 @@ public final class NpmService: Sendable {
     
     public func upgradeAll(packages: [String]) -> AsyncStream<String> {
         guard let command = Self.upgradeAllCommand(packages: packages) else {
-            return ShellExecutor.shared.rejectedStream(reason: "沒有可升級的項目，或套件名稱含不允許的字元")
+            return ShellExecutor.shared.rejectedStream(reason: "沒有可更新的項目，或套件名稱含不允許的字元")
         }
         return ShellExecutor.shared.stream(command: command)
     }

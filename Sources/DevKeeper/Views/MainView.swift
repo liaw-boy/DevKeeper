@@ -118,7 +118,7 @@ private struct Sidebar: View {
                 Text("DevKeeper")
                     .font(DK.Font.heading)
                     .foregroundColor(DK.textPrimary)
-                Text(viewModel.totalOutdatedCount > 0 ? "\(viewModel.totalOutdatedCount) 項可升級" : "全部最新")
+                Text(viewModel.totalOutdatedCount > 0 ? "\(viewModel.totalOutdatedCount) 項可更新" : "全部最新")
                     .font(DK.Font.caption)
                     .foregroundColor(DK.textTertiary)
             }

@@ -65,16 +65,16 @@ func usage() {
     用法：devkeeper-cli <指令> [選項]
 
     指令：
-      scan            列出 Python 版本、npm 與 pip 套件、系統套件的待升級狀態
+      scan            列出 Python 版本、npm 與 pip 套件、系統套件的待更新狀態
       python list     列出所有偵測到的 Python 與支援狀態
       audit           稽核所有 Python 環境、uv tool 與 npm 的已知安全弱點（OSV）
-      fix             修復弱點：先嘗試直接升級，修不了時規劃「搬到 uv 獨立環境」或「移除」
+      fix             修復弱點：先嘗試直接更新，修不了時規劃「搬到 uv 獨立環境」或「移除」
       serve           啟動本機網頁介面（僅限 127.0.0.1，唯讀），網址含一次性金鑰
       version         顯示版本
 
     選項：
       --json          以 JSON 輸出（scan、python list、audit）
-      --yes, -y       fix：確認執行（升級、搬移或移除套件）；沒加時只預覽
+      --yes, -y       fix：確認執行（更新、搬移或移除套件）；沒加時只預覽
       --dry-run       fix：只預覽會執行的指令（與不加 --yes 相同，結束代碼為 0）
       --all           audit：連內建例外（系統 Python 附的 pip、setuptools、wheel）也顯示
       --port 埠號      serve：監聽的連接埠（預設 8765，0 = 自動挑選）
@@ -124,14 +124,14 @@ func commandScan() async -> Int32 {
     print(bold("系統：") + uname)
     print(bold("\nPython：") + "\(env.interpreters.count) 個版本")
     for i in env.interpreters { print("  \(i.version)  \(i.source.rawValue)  \(lifecycleText(i))") }
-    print(bold("\nnpm 全域套件：") + "\(report.npmGlobalCount) 個，\(npmOutdated.count) 個可升級")
+    print(bold("\nnpm 全域套件：") + "\(report.npmGlobalCount) 個，\(npmOutdated.count) 個可更新")
     for (name, latest) in npmOutdated.sorted(by: { $0.key < $1.key }) { print("  \(name) → \(latest)") }
     if let v = PythonRuntime.current?.version {
-        print(bold("\npip 套件（Python \(v)）：") + "\(report.pipCount) 個，\(pipOutdated.count) 個可升級")
+        print(bold("\npip 套件（Python \(v)）：") + "\(report.pipCount) 個，\(pipOutdated.count) 個可更新")
         for (name, latest) in pipOutdated.sorted(by: { $0.key < $1.key }) { print("  \(name) → \(latest)") }
     }
     if let manager {
-        print(bold("\n系統套件（\(manager)）：") + (systemCount > 0 ? "\(systemCount) 個已安裝，" : "") + "\(upgradable.count) 個可升級")
+        print(bold("\n系統套件（\(manager)）：") + (systemCount > 0 ? "\(systemCount) 個已安裝，" : "") + "\(upgradable.count) 個可更新")
         for line in upgradable.prefix(20) { print("  \(line)") }
         if upgradable.count > 20 { print(dim("  …另有 \(upgradable.count - 20) 個")) }
     }
@@ -228,12 +228,12 @@ func commandFix() async -> Int32 {
         }
     }
     if preview {
-        print(dim("\n升級後若讓其他套件的版本限制不成立，會自動還原為原本的版本。直接升級失敗時，可能會再提出搬移或移除的替代做法。"))
+        print(dim("\n更新後若讓其他套件的版本限制不成立，會自動還原為原本的版本。直接更新失敗時，可能會再提出搬移或移除的替代做法。"))
         if !options.dryRun { print(dim("確認後加上 --yes 執行：devkeeper-cli fix --yes")) }
         return options.dryRun ? 0 : 2
     }
-    print(bold("\n直接升級：成功 \(fixedCount) 項，失敗 \(failed.count) 項"))
-    if let url = FixHistory.defaultURL { print(dim("升級前後的版本已記錄在 \(url.path)")) }
+    print(bold("\n直接更新：成功 \(fixedCount) 項，失敗 \(failed.count) 項"))
+    if let url = FixHistory.defaultURL { print(dim("更新前後的版本已記錄在 \(url.path)")) }
     guard !failed.isEmpty else { return 0 }
     
     // Alternative fixes for what could not be upgraded in place.

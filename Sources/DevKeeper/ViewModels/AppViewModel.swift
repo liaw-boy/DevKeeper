@@ -228,7 +228,7 @@ public final class AppViewModel: ObservableObject {
         
         self.lastScanDate = Date()
         self.isScanning = false
-        appendLog("掃描完成。發現 \(totalOutdatedCount) 個待升級項目。")
+        appendLog("掃描完成。發現 \(totalOutdatedCount) 個待更新項目。")
         
         if Self.boolSetting("enableSecurityAudit") {
             Task { await self.scanSecurityAudit() }
@@ -260,13 +260,13 @@ public final class AppViewModel: ObservableObject {
     public func upgradeAITool(item: AIToolItem, confirmedRemoteScript: Bool = false) async {
         guard !isActionRunning else { return }
         if item.updateRunsRemoteScript && !confirmedRemoteScript {
-            appendLog("已取消 \(item.name) 升級：指令會執行遠端下載的腳本，需先確認。")
+            appendLog("已取消 \(item.name) 更新：指令會執行遠端下載的腳本，需先確認。")
             return
         }
         isActionRunning = true
         currentActionPackageId = item.id
         
-        appendLog("正在升級 AI 開發工具: \(item.name) (\(item.updateCommand))...")
+        appendLog("正在更新 AI 開發工具: \(item.name) (\(item.updateCommand))...")
         liveLogOutput = ""
         
         let stream = AIToolService.shared.upgradeTool(item: item)
@@ -281,9 +281,9 @@ public final class AppViewModel: ObservableObject {
                 self.aiTools[idx].currentVersion = local.version
                 self.aiTools[idx].binaryPath = local.binaryPath
                 if self.aiTools[idx].isOutdated {
-                    appendLog("\(item.name) 升級後版本仍為 \(local.version)，低於最新版 \(item.latestVersion ?? "?")，升級可能未成功，請查看日誌。")
+                    appendLog("\(item.name) 更新後版本仍為 \(local.version)，低於最新版 \(item.latestVersion ?? "?")，更新可能未成功，請查看日誌。")
                 } else {
-                    appendLog("\(item.name) 升級完成，目前版本 \(local.version)。")
+                    appendLog("\(item.name) 更新完成，目前版本 \(local.version)。")
                 }
             }
             self.isActionRunning = false
@@ -726,7 +726,7 @@ public final class AppViewModel: ObservableObject {
         self.isFixingAllVulnerabilities = true
         self.actionStage = "準備批次修復已知弱點..."
         self.actionProgress = 0.05
-        appendLog("啟動批次修復所有可升級之安全弱點...")
+        appendLog("啟動批次修復所有可更新之安全弱點...")
         
         let groups = groupedVulnerabilities.filter { !isSystemBuiltIn($0) }
         let jobs = groups.flatMap { group in group.fixTargets.map { (group, $0) } }
@@ -947,7 +947,7 @@ public final class AppViewModel: ObservableObject {
         actionProgress = 0.15
         actionStage = "準備更新環境..."
         
-        appendLog("正在升級: \(package.name)...")
+        appendLog("正在更新: \(package.name)...")
         liveLogOutput = ""
         
         let stream: AsyncStream<String>
@@ -980,7 +980,7 @@ public final class AppViewModel: ObservableObject {
         }
         
         guard ShellExecutor.shared.lastStreamStatus == 0 else {
-            appendLog("\(package.name) 升級失敗，請查看日誌。")
+            appendLog("\(package.name) 更新失敗，請查看日誌。")
             self.isActionRunning = false
             self.currentActionPackageId = nil
             self.actionProgress = 0.0
@@ -990,9 +990,9 @@ public final class AppViewModel: ObservableObject {
         
         // Mark 100% completed
         self.actionProgress = 1.0
-        self.actionStage = "升級完成！"
+        self.actionStage = "更新完成！"
         self.completedPackageId = package.id
-        appendLog("\(package.name) 升級程序完成。")
+        appendLog("\(package.name) 更新程序完成。")
         
         // Wait 0.7s so user clearly sees the 100% completed status
         try? await Task.sleep(nanoseconds: 700_000_000)
@@ -1155,7 +1155,7 @@ public final class AppViewModel: ObservableObject {
         guard !outdated.isEmpty else { return }
         
         isActionRunning = true
-        appendLog("正在批次升級全域 npm 套件...")
+        appendLog("正在批次更新全域 npm 套件...")
         liveLogOutput = ""
         
         let stream = NpmService.shared.upgradeAll(packages: outdated.map { $0.name })
@@ -1163,7 +1163,7 @@ public final class AppViewModel: ObservableObject {
             self.liveLogOutput += chunk
         }
         
-        appendLog("全域 npm 批次升級完成。")
+        appendLog("全域 npm 批次更新完成。")
         self.isActionRunning = false
         await scanNpm()
     }
@@ -1190,7 +1190,7 @@ public final class AppViewModel: ObservableObject {
         let names = outdatedBrewNames
         guard !names.formulae.isEmpty || !names.casks.isEmpty else { return }
         isActionRunning = true
-        appendLog("正在升級 \(names.formulae.count + names.casks.count) 個 Homebrew 項目...")
+        appendLog("正在更新 \(names.formulae.count + names.casks.count) 個 Homebrew 項目...")
         liveLogOutput = ""
         
         let stream = BrewService.shared.upgrade(formulae: names.formulae, casks: names.casks)
@@ -1198,7 +1198,7 @@ public final class AppViewModel: ObservableObject {
             self.liveLogOutput += chunk
         }
         
-        appendLog("Homebrew 升級完成。")
+        appendLog("Homebrew 更新完成。")
         self.isActionRunning = false
         await scanBrew()
     }
