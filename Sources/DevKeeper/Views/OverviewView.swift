@@ -20,7 +20,7 @@ public struct OverviewView: View {
 
     /// Everything outdated that this page lists (AI tools have their own page).
     private var outdatedItems: [PackageItem] {
-        (viewModel.npmPackages + viewModel.brewPackages + viewModel.pythonPackages).filter { $0.status.isOutdated }
+        (viewModel.npmPackages + viewModel.brewPackages + viewModel.pythonPackages + viewModel.uvTools).filter { $0.status.isOutdated }
     }
 
     private var isFiltering: Bool {
@@ -33,7 +33,7 @@ public struct OverviewView: View {
             switch filterCategory {
             case .all: break
             case .brew: if item.type != .brewFormula && item.type != .brewCask { return false }
-            case .python: if item.type != .python { return false }
+            case .python: if item.type != .python && item.type != .uvTool { return false }
             case .npm: if item.type != .npm { return false }
             }
             switch filterScope {
@@ -180,7 +180,7 @@ public struct OverviewView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DK.Space.s), count: 3), spacing: DK.Space.s) {
             sourceCard("AI 工具", source: .ai, total: viewModel.aiTools.count, outdated: viewModel.outdatedAIToolCount, tab: .aiTools)
             sourceCard("npm", source: .npm, total: viewModel.npmPackages.count, outdated: viewModel.outdatedNpmCount, tab: .npm)
-            sourceCard("Python", source: .python, total: viewModel.pythonPackages.count, outdated: viewModel.outdatedPythonCount, tab: .python)
+            sourceCard("Python", source: .python, total: viewModel.pythonPackages.count + viewModel.uvTools.count, outdated: viewModel.outdatedPythonCount + viewModel.outdatedUVCount, tab: .python)
             sourceCard("Homebrew", source: .homebrew, total: viewModel.brewPackages.count, outdated: viewModel.outdatedBrewCount, tab: .brew)
             DKMetricCard(
                 title: "資料庫服務",

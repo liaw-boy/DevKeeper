@@ -128,3 +128,65 @@ final class NpmRegistryInfoTests: XCTestCase {
         XCTAssertNil(NpmService.parseRegistryInfo(Data("nope".utf8)))
     }
 }
+
+final class UVToolParsingTests: XCTestCase {
+    private let sample = """
+    demo-tool v0.31.0 [extras: extra1] [with: demo-lib==2.9.1] [required: >=0.30] [latest: 0.32.2] [CPython 3.12.14]
+    - demo-tool
+    sample-cli v0.9.96 [CPython 3.13.15]
+    - graphify
+    - graphify-mcp
+    ruff v0.4.0 [required: ==0.4.0] [latest: 0.17.3]
+    - ruff
+    """
+    
+    func testParsesHeadersExtrasAndExecutables() {
+        let tools = UVToolService.parseList(sample)
+        XCTAssertEqual(tools.map(\.name), ["demo-tool", "sample-cli", "ruff"])
+        XCTAssertEqual(tools[0].version, "0.31.0")
+        XCTAssertEqual(tools[0].extras, ["extra1"])
+        XCTAssertEqual(tools[0].with, ["demo-lib==2.9.1"])
+        XCTAssertEqual(tools[0].required, ">=0.30")
+        XCTAssertEqual(tools[0].latest, "0.32.2")
+        XCTAssertEqual(tools[0].python, "CPython 3.12.14")
+        XCTAssertEqual(tools[1].executables, ["graphify", "graphify-mcp"])
+        XCTAssertNil(tools[1].latest)
+    }
+    
+    func testExactPinIsDetected() {
+        let tools = UVToolService.parseList(sample)
+        XCTAssertFalse(tools[0].isPinned)
+        XCTAssertTrue(tools[2].isPinned)
+        var ranged = tools[0]
+        ranged.required = ">=1,<2"
+        XCTAssertFalse(ranged.isPinned)
+        ranged.required = ">=1,==1.5"
+        XCTAssertTrue(ranged.isPinned)
+    }
+    
+    func testIgnoresNoiseAndUnsafeNames() {
+        let output = "warning: something odd\n$(touch x) v1.0\nok-tool v1.2.3\n- ok\n- orphan"
+        let tools = UVToolService.parseList(output)
+        XCTAssertEqual(tools.map(\.name), ["ok-tool"])
+        XCTAssertEqual(tools[0].executables, ["ok", "orphan"])
+        XCTAssertTrue(UVToolService.parseList("").isEmpty)
+        XCTAssertTrue(UVToolService.parseList("No tools installed").isEmpty)
+    }
+    
+    func testMergeAttachesLatestOnlyToOutdatedTools() {
+        let all = UVToolService.parseList("a v1.0\n- a\nb v2.0\n- b")
+        let outdated = UVToolService.parseList("b v2.0 [latest: 2.5]\n- b")
+        let merged = UVToolService.merge(all: all, outdated: outdated)
+        XCTAssertNil(merged[0].latest)
+        XCTAssertEqual(merged[1].latest, "2.5")
+    }
+}
+
+final class UVStrictNameTests: XCTestCase {
+    func testStrictNameRejectsPathsAndOptions() {
+        XCTAssertEqual(UVToolService.strictName("my-tool_2"), "my-tool_2")
+        for bad in ["a/../../x", "a/b", "@x", "-x", "a;b", "a$(b)", "a..b", ""] {
+            XCTAssertNil(UVToolService.strictName(bad), bad)
+        }
+    }
+}

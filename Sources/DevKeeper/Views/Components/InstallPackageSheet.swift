@@ -30,6 +30,7 @@ public struct InstallPackageSheet: View {
                     DKDropdown(options: [
                         (PackageType.npm, "npm 全域工具"),
                         (.python, "Python 套件（pip）"),
+                        (.uvTool, "uv 工具"),
                         (.brewFormula, "Homebrew 命令列工具"),
                         (.brewCask, "Homebrew 應用程式"),
                         (.database, "資料庫服務")
@@ -71,6 +72,7 @@ public struct InstallPackageSheet: View {
         case .brewFormula: return "終端機工具，例如 ffmpeg、git。"
         case .brewCask: return "macOS 圖形應用程式。"
         case .database: return "PostgreSQL、Redis、MySQL 等，透過 Homebrew 安裝。"
+        case .uvTool: return "用 uv 安裝成獨立環境的 Python 命令列工具，需要先安裝 uv。"
         }
     }
     
@@ -81,6 +83,7 @@ public struct InstallPackageSheet: View {
         case .brewFormula: return "例如 ffmpeg"
         case .brewCask: return "例如 visual-studio-code"
         case .database: return "例如 postgresql@16"
+        case .uvTool: return "例如 ruff"
         }
     }
 }

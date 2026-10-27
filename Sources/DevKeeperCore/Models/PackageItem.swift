@@ -6,6 +6,7 @@ public enum PackageType: String, Codable, CaseIterable, Sendable {
     case brewFormula = "Formula"
     case brewCask = "Cask"
     case database = "資料庫"
+    case uvTool = "uv"
     
     public var displayName: String {
         switch self {
@@ -14,6 +15,7 @@ public enum PackageType: String, Codable, CaseIterable, Sendable {
         case .brewFormula: return "Homebrew Formula"
         case .brewCask: return "Homebrew Cask"
         case .database: return "資料庫服務"
+        case .uvTool: return "uv 工具"
         }
     }
     
@@ -24,6 +26,7 @@ public enum PackageType: String, Codable, CaseIterable, Sendable {
         case .brewFormula: return "terminal"
         case .brewCask: return "macwindow"
         case .database: return "cylinder.split.1x2"
+        case .uvTool: return "wrench.and.screwdriver"
         }
     }
 }
@@ -84,6 +87,9 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
     public var isUninstalling: Bool = false
     /// Homebrew formulae installed only because another package needs them.
     public var isDependencyOnly: Bool = false
+    /// Set on a uv tool that was installed with an exact version (`==x`) while a newer version exists:
+    /// `uv tool upgrade` will not move it, so no update is offered.
+    public var pinnedSpecifier: String?
     
     public init(
         name: String,
@@ -117,6 +123,8 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
             return "\(PythonRuntime.executable) -m pip install --upgrade \(name)"
         case .database:
             return "brew upgrade \(name) && brew services restart \(name)"
+        case .uvTool:
+            return "uv tool upgrade \(name)"
         }
     }
     
@@ -134,6 +142,8 @@ public struct PackageItem: Identifiable, Sendable, Hashable {
             return ["brew uninstall --zap --cask \(name)"]
         case .database:
             return ["brew services stop \(name)", "brew uninstall \(name)", "brew autoremove"]
+        case .uvTool:
+            return ["uv tool uninstall \(name)"]
         }
     }
     

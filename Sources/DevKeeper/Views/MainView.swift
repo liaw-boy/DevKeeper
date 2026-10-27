@@ -80,7 +80,7 @@ private struct Sidebar: View {
                 section("套件")
                 item(.aiTools, count: viewModel.outdatedAIToolCount)
                 item(.npm, count: viewModel.outdatedNpmCount)
-                item(.python, count: viewModel.outdatedPythonCount)
+                item(.python, count: viewModel.outdatedPythonCount + viewModel.outdatedUVCount)
                 item(.brew, count: viewModel.outdatedBrewCount)
                 item(.database)
                 section("安全")

@@ -471,6 +471,7 @@ enum DKSource {
         case .brewFormula: self = .homebrew
         case .brewCask: self = .cask
         case .database: self = .database
+        case .uvTool: self = .python
         }
     }
     

@@ -41,6 +41,12 @@ public struct SystemInfo: Sendable {
     public var npmPath: String = ""
 }
 
+public enum UVScanState: Equatable, Sendable {
+    case unknown, notInstalled, failed, ready
+    /// The outdated lookup failed, so tools are listed without update status.
+    case readyWithoutUpdateStatus
+}
+
 /// Whether the vulnerability list can be trusted as "nothing found".
 public enum AuditState: Equatable, Sendable {
     /// No audit has finished since launch (or results were cleared).
@@ -77,6 +83,9 @@ public final class AppViewModel: ObservableObject {
     @Published public var actionStage: String = ""
     @Published public var completedPackageId: String? = nil
     @Published public var fixingVulnId: String? = nil
+    @Published public var uvTools: [PackageItem] = []
+    /// Why the uv tool list may be empty: uv missing, listing failed, or genuinely no tools.
+    @Published public var uvScanState: UVScanState = .unknown
     @Published public var pythonInterpreters: [PythonInterpreter] = []
     @Published public var isScanningPython: Bool = false
     @Published public var pythonActionLabel: String? = nil
@@ -170,6 +179,10 @@ public final class AppViewModel: ObservableObject {
         npmPackages.filter { $0.status.isOutdated }.count
     }
     
+    public var outdatedUVCount: Int {
+        uvTools.filter { $0.status.isOutdated }.count
+    }
+    
     public var outdatedPythonCount: Int {
         pythonPackages.filter { $0.status.isOutdated }.count
     }
@@ -187,7 +200,7 @@ public final class AppViewModel: ObservableObject {
     }
     
     public var totalOutdatedCount: Int {
-        outdatedAIToolCount + outdatedNpmCount + outdatedPythonCount + outdatedBrewCount
+        outdatedAIToolCount + outdatedNpmCount + outdatedPythonCount + outdatedUVCount + outdatedBrewCount
     }
     
     public func loadSystemInfo() async {
@@ -220,11 +233,12 @@ public final class AppViewModel: ObservableObject {
         async let aiTask = scanAITools()
         async let npmTask = scanNpm()
         async let pyTask = scanPython()
+        async let uvTask = scanUV()
         async let brewTask = scanBrew()
         async let dbTask = scanDatabases()
         async let selfUpdateTask: Void = checkSelfUpdateIfEnabled()
         
-        _ = await (aiTask, npmTask, pyTask, brewTask, dbTask, selfUpdateTask)
+        _ = await (aiTask, npmTask, pyTask, uvTask, brewTask, dbTask, selfUpdateTask)
         
         self.lastScanDate = Date()
         self.isScanning = false
@@ -904,7 +918,7 @@ public final class AppViewModel: ObservableObject {
     private func savePyPICache(_ cache: [String: PythonService.PyPIInfo]) {
         var kept = cache
         if kept.count > Self.pypiCacheLimit {
-            let installed = Set(pythonPackages.map { $0.name.lowercased() })
+            let installed = Set((pythonPackages + uvTools).map { $0.name.lowercased() })
             kept = kept.filter { installed.contains($0.key) }
         }
         if let data = try? JSONEncoder().encode(kept) { UserDefaults.standard.set(data, forKey: Self.pypiCacheKey) }
@@ -915,6 +929,59 @@ public final class AppViewModel: ObservableObject {
             guard let info = cache[pythonPackages[index].name.lowercased()] else { continue }
             if pythonPackages[index].description == nil { pythonPackages[index].description = info.summary }
             if pythonPackages[index].homepage == nil { pythonPackages[index].homepage = info.homepage }
+        }
+        for index in uvTools.indices {
+            guard let info = cache[uvTools[index].name.lowercased()] else { continue }
+            // The uv notes (extras, Python) are kept after the PyPI summary.
+            let notes = uvTools[index].description
+            if let summary = info.summary, !(notes ?? "").hasPrefix(summary) {
+                uvTools[index].description = notes.map { "\(summary) · \($0)" } ?? summary
+            }
+            if uvTools[index].homepage == nil { uvTools[index].homepage = info.homepage }
+        }
+    }
+    
+    public func scanUV() async {
+        switch await UVToolService.shared.scan() {
+        case .notInstalled:
+            uvTools = []
+            uvScanState = .notInstalled
+        case .failed:
+            uvScanState = .failed
+            appendLog("uv 工具清單讀取失敗。")
+        case .tools(let tools, let latestKnown):
+            uvTools = tools.map { tool in
+                var item = PackageItem(name: tool.name, currentVersion: tool.version, latestVersion: tool.latest, type: .uvTool)
+                if !latestKnown {
+                    item.status = .error
+                } else if let latest = tool.latest {
+                    if tool.isPinned {
+                        item.status = .upToDate
+                        item.pinnedSpecifier = tool.required
+                    } else {
+                        item.status = PackageItem.computeUpdateStatus(current: tool.version, latest: latest)
+                    }
+                } else {
+                    item.status = .upToDate
+                    item.latestVersion = tool.version
+                }
+                var notes: [String] = []
+                if !tool.extras.isEmpty { notes.append("附加套件 \(tool.extras.joined(separator: ", "))") }
+                if !tool.with.isEmpty { notes.append("另裝 \(tool.with.joined(separator: ", "))") }
+                if let python = tool.python { notes.append(python) }
+                item.description = notes.isEmpty ? nil : notes.joined(separator: " · ")
+                return item
+            }
+            uvScanState = latestKnown ? .ready : .readyWithoutUpdateStatus
+            applyPyPIInfo(Self.loadPyPICache())
+            let cache = Self.loadPyPICache()
+            let missing = uvTools.filter { cache[$0.name.lowercased()] == nil }.map(\.name).prefix(40)
+            if !missing.isEmpty {
+                var updated = cache
+                for (name, info) in await PythonService.shared.fetchPyPIInfo(for: Array(missing)) { updated[name.lowercased()] = info }
+                savePyPICache(updated)
+                applyPyPIInfo(updated)
+            }
         }
     }
     
@@ -962,6 +1029,8 @@ public final class AppViewModel: ObservableObject {
             stream = BrewService.shared.upgradePackage(name: package.name, isCask: true)
         case .database:
             stream = DatabaseService.shared.installDatabase(name: package.name)
+        case .uvTool:
+            stream = UVToolService.shared.upgradeTool(name: package.name)
         }
         
         for await chunk in stream {
@@ -986,6 +1055,24 @@ public final class AppViewModel: ObservableObject {
             self.actionProgress = 0.0
             self.actionStage = ""
             return
+        }
+        
+        if package.type == .uvTool {
+            // uv exits 0 even when it did nothing (a pinned or range-limited tool), so check the version.
+            self.actionStage = "確認更新結果..."
+            await scanUV()
+            let after = uvTools.first { $0.name == package.name }
+            if after?.currentVersion == package.currentVersion {
+                appendLog("\(package.name) 沒有更新：安裝時指定了版本或範圍，已是限制內的最新版。要換版本請重新安裝。")
+                self.isActionRunning = false
+                self.currentActionPackageId = nil
+                self.actionProgress = 0.0
+                self.actionStage = ""
+                return
+            }
+            if let problems = await UVToolService.shared.dependencyProblems(name: package.name) {
+                appendLog("\(package.name) 更新後相依套件有衝突：\(problems)")
+            }
         }
         
         // Mark 100% completed
@@ -1028,6 +1115,9 @@ public final class AppViewModel: ObservableObject {
             }
         case .database:
             break
+        case .uvTool:
+            // Already refreshed from uv after the update.
+            break
         }
     }
     
@@ -1052,6 +1142,8 @@ public final class AppViewModel: ObservableObject {
             stream = BrewService.shared.cleanUninstallPackage(name: package.name, isCask: true)
         case .database:
             stream = DatabaseService.shared.cleanUninstallDatabase(name: package.name)
+        case .uvTool:
+            stream = UVToolService.shared.uninstallTool(name: package.name)
         }
         
         for await chunk in stream {
@@ -1076,6 +1168,8 @@ public final class AppViewModel: ObservableObject {
                 self.npmPackages.removeAll { $0.id == package.id || $0.name == package.name }
             case .database:
                 break
+            case .uvTool:
+                self.uvTools.removeAll { $0.id == package.id || $0.name == package.name }
             }
             self.isActionRunning = false
             self.currentActionPackageId = nil
@@ -1102,6 +1196,8 @@ public final class AppViewModel: ObservableObject {
             stream = BrewService.shared.installPackage(name: cleanName, isCask: true)
         case .database:
             stream = DatabaseService.shared.installDatabase(name: cleanName)
+        case .uvTool:
+            stream = UVToolService.shared.installTool(name: cleanName)
         }
         
         for await chunk in stream {
@@ -1208,6 +1304,7 @@ public final class AppViewModel: ObservableObject {
         case .npm: await scanNpm()
         case .python: await scanPython()
         case .brewFormula, .brewCask: await scanBrew()
+        case .uvTool: await scanUV()
         case .database:
             await scanDatabases()
             await scanBrew()

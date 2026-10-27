@@ -173,7 +173,15 @@ public struct PackageRow: View {
             }
         } else {
             HStack(spacing: DK.Space.m) {
-                DKStatusText(status: package.status)
+                if let pin = package.pinnedSpecifier {
+                    Text("已釘選 \(pin)")
+                        .font(DK.Font.caption)
+                        .foregroundColor(DK.textSecondary)
+                        .lineLimit(1)
+                        .dkTooltip("安裝時指定了 \(pin)，uv 不會更新它。要換版本請重新安裝。")
+                } else {
+                    DKStatusText(status: package.status)
+                }
                 if package.status.isOutdated {
                     DKButton("更新", kind: .primary,
                              disabledReason: isBusyElsewhere ? "正在執行其他操作" : nil, action: onUpgrade)

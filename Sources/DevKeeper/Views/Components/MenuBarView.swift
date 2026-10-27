@@ -31,7 +31,7 @@ public struct MenuBarView: View {
         let tools = viewModel.aiTools.filter { $0.isOutdated }.map {
             PreviewItem(id: "ai:\($0.id)", name: $0.name, current: $0.currentVersion, latest: $0.latestVersion ?? "")
         }
-        let packages = (viewModel.npmPackages + viewModel.pythonPackages + viewModel.brewPackages)
+        let packages = (viewModel.npmPackages + viewModel.pythonPackages + viewModel.uvTools + viewModel.brewPackages)
             .filter { $0.status.isOutdated }
             .map { PreviewItem(id: "\($0.type.rawValue):\($0.name)", name: $0.name, current: $0.currentVersion, latest: $0.latestVersion ?? "") }
         return tools + packages
@@ -162,7 +162,7 @@ public struct MenuBarView: View {
     }
     
     private var totalPackageCount: Int {
-        viewModel.aiTools.count + viewModel.npmPackages.count + viewModel.pythonPackages.count + viewModel.brewPackages.count
+        viewModel.aiTools.count + viewModel.npmPackages.count + viewModel.pythonPackages.count + viewModel.uvTools.count + viewModel.brewPackages.count
     }
     
     private var severitySegments: [(value: Double, color: Color)] {
@@ -180,7 +180,7 @@ public struct MenuBarView: View {
         VStack(spacing: 0) {
             CategoryRow(source: .ai, title: NavigationTab.aiTools.title, outdated: viewModel.outdatedAIToolCount, total: viewModel.aiTools.count) { openTab(.aiTools) }
             CategoryRow(source: .npm, title: NavigationTab.npm.title, outdated: viewModel.outdatedNpmCount, total: viewModel.npmPackages.count) { openTab(.npm) }
-            CategoryRow(source: .python, title: NavigationTab.python.title, outdated: viewModel.outdatedPythonCount, total: viewModel.pythonPackages.count) { openTab(.python) }
+            CategoryRow(source: .python, title: NavigationTab.python.title, outdated: viewModel.outdatedPythonCount + viewModel.outdatedUVCount, total: viewModel.pythonPackages.count + viewModel.uvTools.count) { openTab(.python) }
             CategoryRow(source: .homebrew, title: NavigationTab.brew.title, outdated: viewModel.outdatedBrewCount, total: viewModel.brewPackages.count) { openTab(.brew) }
         }
     }
