@@ -81,7 +81,7 @@
 ## 頁面結構
 
 - 側邊欄：頂部品牌區（強調色圖示方塊、名稱、待更新數量）；套件頁用來源色圖示方塊，其餘為單色圖示；數量用圓角小標籤，安全弱點只有大於 0 時才變紅。
-- 清單頁（npm、Python、Homebrew）共用 `PackageListPage`：標題列、搜尋與篩選、`PackageRow` 清單。Homebrew 預設隱藏只因相依才安裝的套件，有待更新的仍會顯示。
+- 清單頁（npm、Python、Homebrew）共用 `PackageListPage`；Python 頁用分段控制切換 pip 套件與 uv 工具：標題列、搜尋與篩選、`PackageRow` 清單。Homebrew 預設隱藏只因相依才安裝的套件，有待更新的仍會顯示。
 - 詳細頁、安裝面板、批次修復確認都用 `DKModalPanel`，由 `overlay?.present` 開啟；不使用系統 sheet 或 `confirmationDialog`。
 - 淺色與深色只透過 `DK` token 與 `Color.dkWash(_:)` 切換；不要寫死 `Color(red:)`、`.white`、`.black` 當背景。主控台輸出區用 `DK.surfaceSunken`。
 - App 圖示（`scripts/generate_icon.swift`）是強調藍的圓角方塊加白色 `shippingbox.fill`，與側邊欄品牌區一致。
