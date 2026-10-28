@@ -74,7 +74,8 @@ jobs:
     name: Linux release binary
     runs-on: ubuntu-latest
     needs: linux
-    container: swift:6.0-noble
+    # Built on jammy (glibc 2.35) so the binary also runs on Ubuntu 22.04 and newer; a noble build needs glibc 2.38.
+    container: swift:6.0-jammy
     steps:
       - uses: actions/checkout@v4
       - name: Build static CLI
