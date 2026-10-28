@@ -13,7 +13,12 @@
 - 資料庫頁不再替內嵌資料庫（sqlite）顯示「啟動」；總覽的執行環境區標示 Node、npm、Python 的來源與是否有新版。
 - uv 工具管理（Python 頁的「pip 套件／uv 工具」切換）：列出、更新、移除、安裝；用 `==` 釘選的工具顯示「已釘選」不給更新；更新後重讀版本並跑 `uv pip check`；側邊欄、總覽、選單列的數量都含 uv 工具。工具名稱用嚴格 PyPI 名稱規則（`UVToolService.strictName`）。
 
+- Linux 版（`linux-gui/`，Python + PySide6，唯讀）：總覽、Python、npm、pip、uv 工具、安全稽核；資料來自 `devkeeper-cli --json`（`scan` 新增 `uvStatus`、`uvTools`），稽核結束代碼 3 顯示「結果不完整」。CI 的 `Linux GUI` 工作跑 pytest、用 PyInstaller + appimagetool 打成 `DevKeeper-x86_64.AppImage`，並用 `--check` 啟動煙霧測試（成品在 Actions 的 artifact，尚未附到 release）。
+- Linux 發版 CLI 改在 Ubuntu 22.04（`swift:6.0-jammy`）編，glibc 2.35 以上能跑；先前在 noble 編的需要 glibc 2.38。**已發布的 v1.3.0 的 Linux CLI 仍是舊的，在 22.04 跑不起來。**
+
 ## 尚未驗證（需要人操作）
+
+- Linux 圖形版只在 macOS 離屏與 CI 離屏跑過，沒有人在真的 Linux 桌面開過；沒有點擊測試；樣式只是 DK 配色的仿製，不是 DK 元件。AppImage 的 xcb 函式庫有補裝但未逐一確認。（需要人操作）
 
 - uv 工具的更新、移除、安裝尚未在真實工具上端到端執行（未獲同意動使用者的工具）；釘選顯示只有單元測試；沒網路時的行為未測。
 - 所有點擊行為：確認面板、下拉、篩選、分段切換、啟停服務、Esc、點背景關閉。
@@ -21,6 +26,8 @@
 - 選單列面板的動畫與實際大小（只用大圖預覽與面板區域截圖看過）。
 
 ## 尚未做
+
+0. Linux：把 AppImage 附到 release（要發新版並打 tag，需明確同意）、`--screenshot` 讓 CI 截 Linux 畫面、自動更新、ARM 版、可操作的版本（更新／移除）、CI 檢查 CLI JSON 欄位改動時 Linux 版測試一併失敗、本機網頁介面沒有 uv 頁、AppImage 打包用的 appimagetool 沒有驗證雜湊。
 
 1. Python 頁沒有「全部更新」，uv 工具也沒有（相依衝突風險，只能逐一更新）（需要在 Core 新增批次升級邏輯與測試）。
 2. B 區塊：新版本／新弱點的系統通知、視窗關閉後可從選單列重開（需 AppDelegate，單一 `Window` scene 關閉會結束 App）、釘選與略過版本、歷史紀錄頁、勾選後批次升級。
@@ -30,7 +37,7 @@
 
 ## 驗證方式
 
-- 完成標準：`swift build`（無警告）、`swift test`（目前 61 個）、`./bundle.sh` 與 `codesign --verify --deep --strict DevKeeper.app`、`open -n DevKeeper.app` 後 20 秒內無崩潰報告。
+- 完成標準：`swift build`（無警告）、`swift test`（目前 61 個；`linux-gui` 的 pytest 16 個）、`./bundle.sh` 與 `codesign --verify --deep --strict DevKeeper.app`、`open -n DevKeeper.app` 後 20 秒內無崩潰報告。
 - 元件展示頁：`DEVKEEPER_GALLERY=1 .build/debug/DevKeeper`；`DEVKEEPER_GALLERY_SHOW=dropdown|tooltip|longtip|confirm|longmodal|modaldropdown` 直接打開浮層。
 - 開發輔助環境變數：`DEVKEEPER_TAB=<頁面中文名>` 直接開某頁、`DEVKEEPER_OPEN=install|detail` 開啟面板、`DEVKEEPER_SHOW_MENU_PANEL=1` 啟動後打開選單列面板。
 - 截圖只截 DevKeeper 視窗：用 `CGWindowListCopyWindowInfo` 依 PID 找視窗編號，再 `screencapture -l <id> -o -x 檔案`；選單列面板用它自己的區域（`-R`）。不要全螢幕截圖。

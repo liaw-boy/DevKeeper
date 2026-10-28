@@ -90,3 +90,21 @@ def test_scan_shape_is_validated():
 def test_audit_items_must_be_objects():
     with pytest.raises(cli.CLIError):
         cli.parse_audit(["x"], 0)
+
+
+def test_scan_without_uv_fields_is_still_valid():
+    scan = cli.parse_scan({"os": "Linux"})
+    assert scan.uv_status == "notInstalled" and scan.uv_tools == []
+
+
+def test_scan_reads_uv_tools():
+    scan = cli.parse_scan({"uvStatus": "ok", "uvTools": [
+        {"name": "tool-a", "version": "1.0", "latest": "1.1", "pinned": False},
+        {"name": "tool-b", "version": "2.0", "pinned": True}]})
+    assert scan.uv_tools[0]["latest"] == "1.1" and scan.uv_tools[1]["latest"] is None
+    assert scan.uv_tools[1]["pinned"] is True
+
+
+def test_scan_rejects_bad_uv_items():
+    with pytest.raises(cli.CLIError):
+        cli.parse_scan({"uvTools": ["x"]})

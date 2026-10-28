@@ -130,6 +130,15 @@ func commandScan() async -> Int32 {
         print(bold("\npip 套件（Python \(v)）：") + "\(report.pipCount) 個，\(pipOutdated.count) 個可更新")
         for (name, latest) in pipOutdated.sorted(by: { $0.key < $1.key }) { print("  \(name) → \(latest)") }
     }
+    switch report.uvStatus {
+    case "notInstalled": break
+    case "failed": print(bold("\nuv 工具：") + yellow("讀取失敗"))
+    default:
+        let outdated = report.uvTools.filter { $0.latest != nil && !$0.pinned }
+        print(bold("\nuv 工具：") + "\(report.uvTools.count) 個，\(outdated.count) 個可更新"
+              + (report.uvStatus == "updatesUnknown" ? "（無法查詢新版本）" : ""))
+        for tool in outdated { print("  \(tool.name) \(tool.version) → \(tool.latest ?? "")") }
+    }
     if let manager {
         print(bold("\n系統套件（\(manager)）：") + (systemCount > 0 ? "\(systemCount) 個已安裝，" : "") + "\(upgradable.count) 個可更新")
         for line in upgradable.prefix(20) { print("  \(line)") }

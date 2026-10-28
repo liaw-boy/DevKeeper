@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFrame, QHBoxLay
 
 from . import cli, theme
 
-PAGES = ["總覽", "Python", "npm", "pip", "安全稽核"]
+PAGES = ["總覽", "Python", "npm", "pip", "uv 工具", "安全稽核"]
 
 
 class _Signals(QObject):
@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
         self._build_python()
         self._build_packages("npm", "npm 全域套件", "有新版的 npm 全域套件")
         self._build_packages("pip", "pip 套件", "目前使用的 Python 直譯器上有新版的套件")
+        self._build_uv()
         self._build_audit()
         self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.nav.setCurrentRow(0)
@@ -180,6 +181,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(table, 1)
         setattr(self, f"{kind}_table", table)
         setattr(self, f"{kind}_sub", page.findChild(QLabel, "subtitle"))
+        self.stack.addWidget(page)
+
+    def _build_uv(self):
+        page, lay = _page("uv 工具", "")
+        self.uv_sub = page.findChild(QLabel, "subtitle")
+        self.uv_table = _table(["工具", "目前版本", "可更新到", "Python"])
+        lay.addWidget(self.uv_table, 1)
         self.stack.addWidget(page)
 
     def _build_audit(self):
@@ -241,7 +249,19 @@ class MainWindow(QMainWindow):
         for kind, count, outdated in (("npm", scan.npm_count, scan.npm_outdated), ("pip", scan.pip_count, scan.pip_outdated)):
             getattr(self, f"{kind}_sub").setText(f"共 {count} 個，{len(outdated)} 個有新版")
             _fill(getattr(self, f"{kind}_table"), [[n, v] for n, v in sorted(outdated.items())])
+        self._show_uv(scan)
         self._finish_one()
+
+    def _show_uv(self, scan: cli.Scan):
+        notes = {"notInstalled": "這台電腦沒有安裝 uv。", "failed": "uv 工具清單讀取失敗。",
+                 "updatesUnknown": "無法查詢新版本（可能沒有網路），只列出已安裝的版本。"}
+        outdated = [t for t in scan.uv_tools if t["latest"] and not t["pinned"]]
+        self.uv_sub.setText(notes.get(scan.uv_status, f"共 {len(scan.uv_tools)} 個，{len(outdated)} 個有新版"))
+        rows = []
+        for t in scan.uv_tools:
+            newer = f"已釘選，不更新（{t['latest']}）" if t["pinned"] and t["latest"] else (t["latest"] or "—")
+            rows.append([t["name"], t["version"], newer, t["python"] or "—"])
+        _fill(self.uv_table, rows)
 
     def _on_interpreters(self, items: List[dict]):
         labels = {"supported": "支援中", "endingSoon": "即將結束支援", "endOfLife": "已結束支援"}

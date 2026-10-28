@@ -37,6 +37,9 @@ class Scan:
     system_manager: Optional[str]
     system_count: int
     system_upgradable: List[str]
+    # "ok", "notInstalled", "failed" or "updatesUnknown"; older CLIs do not report uv at all.
+    uv_status: str = "notInstalled"
+    uv_tools: List[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -102,6 +105,13 @@ def _text_list(value: Any) -> List[str]:
     return [str(x) for x in value] if isinstance(value, list) else []
 
 
+def _uv_tool(value: Any) -> dict:
+    t = _expect(value, dict, "uvTools item")
+    return {"name": str(t.get("name", "")), "version": str(t.get("version", "")),
+            "latest": str(t["latest"]) if t.get("latest") else None,
+            "pinned": t.get("pinned") is True, "python": str(t["python"]) if t.get("python") else None}
+
+
 def parse_scan(data: Any) -> Scan:
     d = _expect(data, dict, "scan")
     return Scan(
@@ -115,6 +125,8 @@ def parse_scan(data: Any) -> Scan:
         system_manager=d.get("systemPackageManager"),
         system_count=_count(d.get("systemPackageCount", 0), "systemPackageCount"),
         system_upgradable=[str(x) for x in _expect(d.get("systemUpgradable", []), list, "systemUpgradable")],
+        uv_status=str(d.get("uvStatus", "notInstalled")),
+        uv_tools=[_uv_tool(t) for t in _expect(d.get("uvTools", []), list, "uvTools")],
     )
 
 
