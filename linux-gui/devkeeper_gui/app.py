@@ -269,10 +269,22 @@ class MainWindow(QMainWindow):
         self._finish_one()
 
 
+def _self_check(app: QApplication, win: MainWindow) -> int:
+    """`--check`: load everything once without showing a window and report whether the CLI answered.
+    Used by CI to prove the packaged build starts; exit 0 only when no page reported an error."""
+    QThreadPool.globalInstance().waitForDone(300000)
+    app.processEvents()
+    failed = not win.overview_error.isHidden()
+    print("devkeeper-gui check:", "FAILED - " + win.overview_error.text() if failed else "ok")
+    return 1 if failed else 0
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("DevKeeper")
     win = MainWindow(app)
+    if "--check" in sys.argv:
+        return _self_check(app, win)
     app.setStyleSheet(theme.stylesheet(_is_dark(app)))
     app.styleHints().colorSchemeChanged.connect(lambda *_: app.setStyleSheet(theme.stylesheet(_is_dark(app))))
     win.show()

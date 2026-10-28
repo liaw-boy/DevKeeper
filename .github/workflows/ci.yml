@@ -88,3 +88,40 @@ jobs:
         with:
           name: devkeeper-cli-linux-x86_64
           path: dist/
+
+  linux-gui:
+    name: Linux GUI (Python tests + AppImage)
+    runs-on: ubuntu-22.04
+    needs: linux-release-binary
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: devkeeper-cli-linux-x86_64
+          path: cli
+      - name: System libraries for Qt and AppImage
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libfuse2 libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 > /dev/null
+      - name: Python tests
+        working-directory: linux-gui
+        run: |
+          pip install -q -e ".[test]"
+          QT_QPA_PLATFORM=offscreen pytest -q
+      - name: Build AppImage
+        working-directory: linux-gui
+        run: |
+          tar xzf ../cli/devkeeper-cli-linux-x86_64.tar.gz -C ../cli
+          packaging/build-appimage.sh "$PWD/../cli/devkeeper-cli"
+      # Starts the packaged app, which runs its bundled CLI and fails if any page could not load.
+      - name: AppImage smoke test
+        working-directory: linux-gui
+        run: |
+          QT_QPA_PLATFORM=offscreen ./DevKeeper-x86_64.AppImage --appimage-extract-and-run --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DevKeeper-x86_64.AppImage
+          path: linux-gui/DevKeeper-x86_64.AppImage
