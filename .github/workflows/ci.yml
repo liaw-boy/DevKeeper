@@ -121,7 +121,7 @@ jobs:
       - name: Bundled CLI JSON output
         run: |
           for c in "scan" "python list" "audit"; do
-            echo "== $c"; ../cli/devkeeper-cli $c --json 2>/dev/null | head -c 300; echo "[exit ${PIPESTATUS[0]}]"
+            echo "== $c"; ../cli/devkeeper-cli $c --json 2>&1 | head -c 300; echo "[exit ${PIPESTATUS[0]}]"
           done
         working-directory: linux-gui
       # Starts the packaged app, which runs its bundled CLI and fails if any page could not load.
