@@ -19,6 +19,8 @@ public final class BrewService: Sendable {
     
     private struct InstalledVersion: Decodable {
         let version: String
+        /// False when the formula was only pulled in as a dependency of something else.
+        let installed_on_request: Bool?
     }
     
     private struct FormulaVersions: Decodable {
@@ -98,7 +100,7 @@ public final class BrewService: Sendable {
                     PackageItem.computeUpdateStatus(current: installedVer, latest: latestVer) :
                     .upToDate
                 
-                result.append(PackageItem(
+                var item = PackageItem(
                     name: f.name,
                     currentVersion: installedVer,
                     latestVersion: latestVer,
@@ -106,7 +108,12 @@ public final class BrewService: Sendable {
                     status: status,
                     description: f.desc,
                     homepage: f.homepage
-                ))
+                )
+                // Only "explicitly not requested" counts; a missing field is treated as installed on purpose.
+                if let installed = f.installed, !installed.isEmpty {
+                    item.isDependencyOnly = installed.allSatisfy { $0.installed_on_request == false }
+                }
+                result.append(item)
             }
         }
         
@@ -141,8 +148,21 @@ public final class BrewService: Sendable {
         return ShellExecutor.shared.stream(command: command)
     }
     
-    public func upgradeAll() -> AsyncStream<String> {
-        return ShellExecutor.shared.stream(command: "brew upgrade")
+    /// Commands that upgrade exactly the listed packages (a bare `brew upgrade` would upgrade everything,
+    /// including packages DevKeeper does not show). Nil when a name is not allowed.
+    public static func upgradeCommands(formulae: [String], casks: [String]) -> [String]? {
+        guard (formulae + casks).allSatisfy(InputValidator.isValidPackageName) else { return nil }
+        var commands: [String] = []
+        if !formulae.isEmpty { commands.append("brew upgrade --formula " + formulae.joined(separator: " ")) }
+        if !casks.isEmpty { commands.append("brew upgrade --cask " + casks.joined(separator: " ")) }
+        return commands
+    }
+    
+    public func upgrade(formulae: [String], casks: [String]) -> AsyncStream<String> {
+        guard let commands = Self.upgradeCommands(formulae: formulae, casks: casks), !commands.isEmpty else {
+            return ShellExecutor.shared.rejectedStream(reason: "沒有可更新的項目，或套件名稱含不允許的字元")
+        }
+        return ShellExecutor.shared.stream(command: commands.joined(separator: "; "))
     }
     
     public func installPackage(name: String, isCask: Bool) -> AsyncStream<String> {

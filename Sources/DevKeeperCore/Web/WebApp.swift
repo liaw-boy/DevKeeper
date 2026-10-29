@@ -32,7 +32,7 @@ public final class WebApp: Sendable {
             return await json("audit-\(showAll)") {
                 let env = await ReportBuilder.loadEnvironment()
                 let result = await ReportBuilder.auditGroups(env, projectsRoot: root, showAll: showAll)
-                return AuditReport(items: ReportBuilder.auditItems(result.groups), hiddenCount: result.hidden)
+                return AuditReport(items: ReportBuilder.auditItems(result.groups), hiddenCount: result.hidden, failedLookups: result.failed)
             }
         default:
             return .text(404, "Not Found")

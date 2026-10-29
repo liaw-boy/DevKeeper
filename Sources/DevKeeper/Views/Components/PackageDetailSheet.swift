@@ -4,11 +4,12 @@ import SwiftUI
 public struct PackageDetailSheet: View {
     public let package: PackageItem
     @ObservedObject var viewModel: AppViewModel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dkOverlay) private var overlay
     
     @State private var isFetchingDetails = false
     @State private var detailedNotes: String = ""
-    @State private var showConfirmUninstall = false
+    @State private var notesTitle: String?
+    @State private var notesURL: String?
     @State private var copiedCommandInSheet = false
     
     public init(package: PackageItem, viewModel: AppViewModel) {
@@ -17,289 +18,154 @@ public struct PackageDetailSheet: View {
     }
     
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header Area
-            HStack(alignment: .top, spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(iconTint.opacity(0.12))
-                        .frame(width: 44, height: 44)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(iconTint.opacity(0.25), lineWidth: 1)
-                        )
-                    
-                    Image(systemName: package.type.sfSymbol)
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundColor(iconTint)
+        DKModalPanel(package.name, subtitle: package.type.displayName, width: 540) {
+            VStack(alignment: .leading, spacing: DK.Space.l) {
+                HStack(spacing: DK.Space.s) {
+                    infoBox("目前版本") {
+                        Text(package.currentVersion)
+                            .font(DK.Font.mono)
+                            .foregroundColor(DK.textPrimary)
+                    }
+                    infoBox("最新版本") {
+                        Text(package.latestVersion ?? "檢查中…")
+                            .font(DK.Font.mono)
+                            .foregroundColor(package.status.isOutdated ? DK.accent : DK.textPrimary)
+                    }
+                    infoBox("狀態") {
+                        DKStatusText(status: package.status)
+                    }
                 }
                 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(package.name)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    Text(package.type.displayName)
-                        .font(.system(size: 11.5))
-                        .foregroundColor(.secondary)
+                block("說明") {
+                    Text(package.description?.isEmpty == false ? package.description! : "沒有提供說明。")
+                        .font(DK.Font.body)
+                        .foregroundColor(DK.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 
-                Spacer()
-            }
-            .padding(24)
-            .background(Color.white.opacity(0.02))
-            
-            Divider()
-                .background(Theme.subtleBorder)
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Version Comparison Box
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("目前本機版本")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            Text(package.currentVersion)
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                .monospacedDigit()
-                                .foregroundColor(.primary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Theme.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("官方最新版本")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            Text(package.latestVersion ?? "檢查中...")
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                                .monospacedDigit()
-                                .foregroundColor(package.status.isOutdated ? Theme.primaryIndigo : .primary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Theme.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("升級狀態")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            StatusBadge(status: package.status)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Theme.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    
-                    // Description Section
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("套件說明")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.primary)
-                        
-                        Text(package.description?.isEmpty == false ? package.description! : "此套件官方未提供額外簡短描述。")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(.secondary)
-                            .lineSpacing(4)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Theme.cardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                    
-                    // Terminal Update Command Section
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("終端機升級指令")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.primary)
-                        
-                        HStack(spacing: 10) {
-                            HStack(spacing: 6) {
-                                Text("$")
-                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                    .foregroundColor(Theme.primaryIndigo)
-                                Text(package.upgradeCommand)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                            }
-                            
-                            Spacer()
-                            
-                            Button(action: {
+                if package.status.isOutdated, !package.upgradeCommand.isEmpty {
+                    block("更新指令") {
+                        HStack(spacing: DK.Space.s) {
+                            Text("$ \(package.upgradeCommand)")
+                                .font(DK.Font.mono)
+                                .foregroundColor(DK.textPrimary)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Spacer(minLength: DK.Space.s)
+                            DKButton(copiedCommandInSheet ? "已複製" : "複製",
+                                     systemImage: copiedCommandInSheet ? "checkmark" : "doc.on.doc", kind: .ghost) {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(package.upgradeCommand, forType: .string)
                                 copiedCommandInSheet = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                    copiedCommandInSheet = false
-                                }
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: copiedCommandInSheet ? "checkmark" : "doc.on.doc")
-                                        .font(.system(size: 11))
-                                    Text(copiedCommandInSheet ? "已複製" : "一鍵複製")
-                                        .font(.system(size: 11.5, weight: .medium))
-                                }
-                                .foregroundColor(copiedCommandInSheet ? Theme.successGreen : .primary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Color.white.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(12)
-                        .background(Color.black.opacity(0.35))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Theme.subtleBorder, lineWidth: 1)
-                        )
-                    }
-                    
-                    // Changelog / Release Notes Section
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("版本更新資訊與發布說明")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.primary)
-                            Spacer()
-                            if isFetchingDetails {
-                                ProgressView()
-                                    .controlSize(.small)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedCommandInSheet = false }
                             }
                         }
-                        
-                        VStack(alignment: .leading, spacing: 6) {
-                            if !detailedNotes.isEmpty {
-                                Text(detailedNotes)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .lineSpacing(3)
-                            } else {
-                                Text(package.status.isOutdated ?
-                                     "此版本包含功能改進、錯誤修復與效能優化。點擊下方更新按鈕可直接升級至最新版本。" :
-                                     "目前已是最新穩定版本，無需升級。")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Theme.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                }
-                .padding(24)
-            }
-            
-            Divider()
-                .background(Theme.subtleBorder)
-            
-            // Bottom Action Footer
-            HStack(spacing: 12) {
-                if let url = InputValidator.httpsURL(package.homepage) {
-                    Link(destination: url) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "safari")
-                                .font(.system(size: 11.5))
-                            Text("官方網站 / GitHub")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    }
-                    .buttonStyle(.bouncy)
                 }
                 
-                Button(action: { showConfirmUninstall = true }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11.5))
-                        Text("乾淨移除")
-                            .font(.system(size: 12, weight: .medium))
+                block("發布說明", trailing: isFetchingDetails ? AnyView(DKSpinner(size: 12)) : nil) {
+                    VStack(alignment: .leading, spacing: DK.Space.tight) {
+                        if !detailedNotes.isEmpty {
+                            if let title = notesTitle {
+                                Text(title)
+                                    .font(DK.Font.bodyMedium)
+                                    .foregroundColor(DK.textPrimary)
+                            }
+                            Text(detailedNotes)
+                                .font(DK.Font.mono)
+                                .foregroundColor(DK.textSecondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let url = InputValidator.httpsURL(notesURL, allowedHosts: ["github.com"]) {
+                                Link("在 GitHub 查看完整說明", destination: url)
+                                    .font(DK.Font.caption)
+                            }
+                        } else {
+                            Text(isFetchingDetails ? "正在取得發布說明…" : notesUnavailableMessage)
+                                .font(DK.Font.caption)
+                                .foregroundColor(DK.textSecondary)
+                        }
                     }
-                    .foregroundColor(Theme.dangerRed)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Theme.dangerRed.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
-                .buttonStyle(.bouncy)
+            }
+        } footer: {
+            if let url = InputValidator.httpsURL(package.homepage) {
+                DKButton("官方網站", systemImage: "safari", kind: .ghost) { NSWorkspace.shared.open(url) }
+            }
+            if !package.uninstallCommands.isEmpty {
+                DKButton("移除", systemImage: "trash", kind: .danger, disabledReason: viewModel.isActionRunning ? "正在執行其他操作" : nil) {
+                    overlay?.confirm(
+                        "移除 \(package.name)？",
+                        message: "將執行以下指令。",
+                        commands: package.uninstallCommands,
+                        confirmTitle: "移除",
+                        destructive: true
+                    ) {
+                        Task { await viewModel.cleanUninstall(package: package) }
+                    }
+                }
                 .disabled(viewModel.isActionRunning)
-                
-                Spacer()
-                
-                Button("關閉") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 14)
-                    .frame(height: 32)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Theme.subtleBorder, lineWidth: 1)
-                    )
-                    .buttonStyle(.bouncy)
-                
-                if package.status.isOutdated {
-                    Button(action: {
-                        dismiss()
-                        Task { await viewModel.upgradeSingle(package: package) }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 11.5, weight: .bold))
-                            Text("立即升級至最新版")
-                                .font(.system(size: 12.5, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .frame(height: 32)
-                        .background(Theme.primaryGradient)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .shadow(color: Theme.primaryIndigo.opacity(0.35), radius: 5, x: 0, y: 2)
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.bouncy)
-                    .disabled(viewModel.isActionRunning)
+            }
+            DKButton("關閉") { overlay?.dismissModal() }
+            if package.status.isOutdated {
+                DKButton("更新", kind: .primary, disabledReason: viewModel.isActionRunning ? "正在執行其他操作" : nil) {
+                    overlay?.dismissModal()
+                    Task { await viewModel.upgradeSingle(package: package) }
                 }
+                .disabled(viewModel.isActionRunning)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(Color(red: 0.09, green: 0.10, blue: 0.12))
         }
-        .frame(width: 540, height: 480)
-        .background(Theme.canvasBackground)
-        .confirmationDialog(
-            "確定要乾淨移除 \(package.name) 嗎？",
-            isPresented: $showConfirmUninstall,
-            titleVisibility: .visible
-        ) {
-            Button("確認乾淨移除", role: .destructive) {
-                dismiss()
-                Task { await viewModel.cleanUninstall(package: package) }
+        .task { await loadReleaseNotes() }
+    }
+    
+    private func infoBox<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: DK.Space.xs) {
+            Text(title)
+                .font(DK.Font.caption)
+                .foregroundColor(DK.textTertiary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DK.Space.m)
+        .background(RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.surfaceSunken))
+    }
+    
+    private func block<Content: View>(_ title: String, trailing: AnyView? = nil, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: DK.Space.s) {
+            HStack {
+                Text(title)
+                    .font(DK.Font.bodyMedium)
+                    .foregroundColor(DK.textPrimary)
+                Spacer()
+                trailing
             }
-            Button("取消", role: .cancel) {}
+            content()
+                .padding(DK.Space.m)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.surfaceSunken))
         }
     }
     
-    private var iconTint: Color {
-        switch package.type {
-        case .npm: return Theme.infoCyan
-        case .python: return Theme.successGreen
-        case .brewFormula: return Theme.warningAmber
-        case .brewCask: return Theme.primaryIndigo
-        case .database: return Theme.purpleAccent
-        }
+    private var notesVersion: String {
+        package.status.isOutdated ? (package.latestVersion ?? package.currentVersion) : package.currentVersion
+    }
+    
+    private var notesUnavailableMessage: String {
+        GitHubReleaseService.githubRepo(from: package.homepage) == nil
+            ? "此套件的官網不是 GitHub，無法自動取得發布說明，請至官方網站查看。"
+            : "在 GitHub 上找不到 \(notesVersion) 版本對應的發布說明。"
+    }
+    
+    private func loadReleaseNotes() async {
+        guard let repo = GitHubReleaseService.githubRepo(from: package.homepage) else { return }
+        isFetchingDetails = true
+        defer { isFetchingDetails = false }
+        guard let release = await GitHubReleaseService.shared.fetchReleaseNotes(owner: repo.owner, repo: repo.repo, version: notesVersion),
+              let body = release.body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty else { return }
+        let limit = 3000
+        detailedNotes = body.count > limit ? String(body.prefix(limit)) + "\n…" : body
+        notesTitle = release.name?.isEmpty == false ? release.name : release.tagName
+        notesURL = release.htmlUrl
     }
 }

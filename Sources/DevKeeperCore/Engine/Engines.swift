@@ -38,11 +38,24 @@ public enum AuditEngine {
         npmPackages: [(name: String, version: String)],
         projectsRoot: String?
     ) async -> [VulnerabilityItem] {
+        await auditOutcome(interpreters: interpreters, npmPackages: npmPackages, projectsRoot: projectsRoot).vulnerabilities
+    }
+    
+    /// Same audit, but also reports how many lookups failed so an incomplete run is not mistaken for a clean one.
+    public static func auditOutcome(
+        interpreters: [PythonInterpreter],
+        npmPackages: [(name: String, version: String)],
+        projectsRoot: String?
+    ) async -> AuditOutcome {
         var detected: [VulnerabilityItem] = []
+        var checked = 0
+        var failed = 0
         var seen = Set<String>()
         
-        func record(_ vulns: [VulnerabilityItem]) {
-            for v in vulns {
+        func record(_ outcome: AuditOutcome) {
+            checked += outcome.checked
+            failed += outcome.failed
+            for v in outcome.vulnerabilities {
                 let scope = v.environment?.pythonPath ?? v.projectPath ?? ""
                 let key = "\(v.id)|\(v.packageName.lowercased())|\(scope)"
                 if seen.insert(key).inserted { detected.append(v) }
@@ -76,11 +89,11 @@ public enum AuditEngine {
                 let hasPackageJson = FileManager.default.fileExists(atPath: sub.appendingPathComponent("package.json").path)
                 let hasRequirements = FileManager.default.fileExists(atPath: sub.appendingPathComponent("requirements.txt").path)
                 if hasPackageJson || hasRequirements {
-                    record(await SecurityService.shared.auditProjectDirectory(at: sub))
+                    record(await SecurityService.shared.auditProjectDirectoryOutcome(at: sub))
                 }
             }
         }
-        return detected
+        return AuditOutcome(vulnerabilities: detected, checked: checked, failed: failed)
     }
     
     /// Built-in exception: pip, setuptools and wheel inside the OS-provided Python. Users cannot upgrade that
@@ -93,26 +106,30 @@ public enum AuditEngine {
     }
     
     /// Audits packages against OSV with a small amount of concurrency.
-    static func auditList(_ packages: [(name: String, version: String)], ecosystem: String, environment: PythonEnvironmentRef?) async -> [VulnerabilityItem] {
-        var results: [VulnerabilityItem] = []
+    static func auditList(_ packages: [(name: String, version: String)], ecosystem: String, environment: PythonEnvironmentRef?) async -> AuditOutcome {
+        var outcome = AuditOutcome()
         let batchSize = 8
         var index = 0
         while index < packages.count {
             let batch = Array(packages[index..<min(index + batchSize, packages.count)])
             index += batchSize
-            let found = await withTaskGroup(of: [VulnerabilityItem].self) { group in
+            let results = await withTaskGroup(of: (items: [VulnerabilityItem], succeeded: Bool).self) { group in
                 for pkg in batch {
                     group.addTask {
-                        await SecurityService.shared.auditPackage(name: pkg.name, version: pkg.version, ecosystem: ecosystem)
+                        await SecurityService.shared.auditPackageChecked(name: pkg.name, version: pkg.version, ecosystem: ecosystem)
                     }
                 }
-                var all: [VulnerabilityItem] = []
-                for await items in group { all.append(contentsOf: items) }
+                var all: [(items: [VulnerabilityItem], succeeded: Bool)] = []
+                for await result in group { all.append(result) }
                 return all
             }
-            results.append(contentsOf: environment.map { env in found.map { $0.inEnvironment(env) } } ?? found)
+            for result in results {
+                outcome.checked += 1
+                if !result.succeeded { outcome.failed += 1 }
+                outcome.vulnerabilities.append(contentsOf: environment.map { env in result.items.map { $0.inEnvironment(env) } } ?? result.items)
+            }
         }
-        return results
+        return outcome
     }
 }
 
@@ -138,6 +155,10 @@ public enum FixEngine {
                 return .failed("Python \(target.version)（\(target.source.rawValue)）受 PEP 668 保護，不允許用 pip 直接修改。")
             }
         }
+        let previous = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
+        let checkCommand = DependencyCheck.command(ecosystem: ecosystem, environment: environment)
+        let conflictsBefore = checkCommand == nil ? [] : await DependencyCheck.run(checkCommand!)
+        
         var collected = ""
         for await chunk in ShellExecutor.shared.stream(command: command) {
             await output(chunk)
@@ -146,12 +167,13 @@ public enum FixEngine {
         var lastStatus = ShellExecutor.shared.lastStreamStatus
         
         // The fixed version may not support this Python; try the newest compatible release as best effort.
+        // Any conflict this causes is caught by the dependency check below.
         let isPip = eco.contains("pypi") || eco.contains("pip")
-        if lastStatus != 0, isPip, command.contains(">="),
+        if lastStatus != 0, isPip, command.contains("=="),
            collected.contains("No matching distribution") || collected.contains("Could not find a version"),
-           let safeName = InputValidator.safeName(packageName) {
-            let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
-            let fallback = "\(python) -m pip install --upgrade \(safeName)"
+           case let fallback = FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: nil,
+                                                         projectPath: nil, environment: environment),
+           !fallback.isEmpty {
             await notice("指定的安全版本無法安裝，改裝目前 Python 可用的最新版本：\(fallback)")
             for await chunk in ShellExecutor.shared.stream(command: fallback) {
                 await output(chunk)
@@ -160,19 +182,51 @@ public enum FixEngine {
             lastStatus = ShellExecutor.shared.lastStreamStatus
         }
         
-        let installed = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
+        var installed = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
+        var result = "failed"
+        let outcome: FixOutcome
         
-        if let target = targetVersion, !target.isEmpty, let installed {
-            if installed.compare(target, options: .numeric) != .orderedAscending {
-                return .fixed
+        if let checkCommand, let previous, let now = installed, now != previous,
+           case let introduced = DependencyCheck.newConflicts(after: await DependencyCheck.run(checkCommand), before: conflictsBefore), !introduced.isEmpty {
+            // The upgrade broke another package's version requirement: put the old version back.
+            let list = introduced.sorted().map { "• \($0)" }.joined(separator: "\n")
+            let rollback = FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: previous,
+                                                     projectPath: nil, environment: environment)
+            await notice("更新到 \(now) 會讓其他套件的版本限制不成立，正在還原為 \(previous)：\(rollback)")
+            for await chunk in ShellExecutor.shared.stream(command: rollback) {
+                await output(chunk)
             }
-            if collected.contains("Requires-Python") || collected.contains("No matching distribution") {
+            installed = await installedVersion(packageName: packageName, ecosystem: ecosystem, environment: environment)
+            if installed == previous {
+                result = "rolledBack"
+                outcome = .failed("其他套件限制了 \(packageName) 的版本，無法更新到安全版本，已還原為 \(previous)：\n\(list)")
+            } else {
+                outcome = .failed("更新後出現版本衝突，自動還原失敗，請手動執行：\(rollback)\n\(list)")
+            }
+        } else if let target = targetVersion, !target.isEmpty, let now = installed {
+            if now.compare(target, options: .numeric) != .orderedAscending {
+                result = "fixed"
+                outcome = .fixed
+            } else if collected.contains("Requires-Python") || collected.contains("No matching distribution") {
                 let py = interpreter.map { "Python \($0.version)" } ?? "Python"
-                return .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(installed) 已是此環境能安裝的最新版。請改用較新的 Python 或自行升級。")
+                outcome = .failed("無法修復：安全版本 \(target) 不支援目前使用的 \(py)，現有版本 \(now) 已是此環境能安裝的最新版。請改用較新的 Python 或自行更新。")
+            } else {
+                outcome = .failed("更新後版本為 \(now)，仍低於安全版本 \(target)。")
             }
-            return .failed("升級後版本為 \(installed)，仍低於安全版本 \(target)。")
+        } else if lastStatus == 0 {
+            result = "fixed"
+            outcome = .fixed
+        } else {
+            outcome = .failed("修復指令執行失敗，請查看執行日誌。")
         }
-        return lastStatus == 0 ? .fixed : .failed("修復指令執行失敗，請查看執行日誌。")
+        
+        var detail: String?
+        if case .failed(let reason) = outcome { detail = reason }
+        FixHistory.record(FixHistory.Entry(
+            packageName: packageName, ecosystem: ecosystem, environment: environment?.label ?? "全域",
+            pythonPath: environment?.pythonPath, fromVersion: previous, toVersion: installed, result: result, detail: detail
+        ))
+        return outcome
     }
     
     public static func installedVersion(packageName: String, ecosystem: String, environment: PythonEnvironmentRef?) async -> String? {
@@ -201,6 +255,44 @@ public enum FixEngine {
             return out.split(separator: " ").last.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return nil
+    }
+}
+
+// MARK: - Dependency check
+
+/// Conflicts reported by `pip check` / `uv pip check`. Comparing them before and after an upgrade shows
+/// whether the upgrade broke another package's version requirement.
+public enum DependencyCheck {
+    static func command(ecosystem: String, environment: PythonEnvironmentRef?) -> String? {
+        let eco = ecosystem.lowercased()
+        guard eco.contains("pypi") || eco.contains("pip") || eco.contains("python") else { return nil }
+        if let environment, environment.kind == .uvTool {
+            return "uv pip check --python \(InputValidator.shellQuoted(environment.pythonPath)) 2>&1"
+        }
+        let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
+        return "\(python) -m pip check 2>&1"
+    }
+    
+    /// One line per broken requirement, from either pip's or uv's output format.
+    public static func conflicts(in output: String) -> Set<String> {
+        Set(output.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.contains(" requires ") || $0.contains(" has requirement ") })
+    }
+    
+    /// Compares conflicts without the version of the package that declares the requirement: pip prints
+    /// `foo 1.0 requires bar>=2` and after upgrading foo the same problem reads `foo 1.1 requires bar>=2`.
+    static func key(_ conflict: String) -> String {
+        conflict.replacingOccurrences(of: #"^(\S+) \S+ (requires|has requirement) "#, with: "$1 $2 ", options: .regularExpression)
+    }
+    
+    public static func newConflicts(after: Set<String>, before: Set<String>) -> Set<String> {
+        let known = Set(before.map(key))
+        return after.filter { !known.contains(key($0)) }
+    }
+    
+    static func run(_ command: String) async -> Set<String> {
+        conflicts(in: (try? await ShellExecutor.shared.run(command: command)) ?? "")
     }
 }
 

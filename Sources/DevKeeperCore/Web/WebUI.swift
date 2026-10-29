@@ -80,7 +80,7 @@ enum WebUI {
       }
       function section(title, list, fmt) {
         view.appendChild(el("h2", null, title));
-        if (!list.length) { view.appendChild(el("div", "dim", "沒有待升級項目")); return; }
+        if (!list.length) { view.appendChild(el("div", "dim", "沒有待更新項目")); return; }
         list.forEach(function (x) { view.appendChild(el("div", "item", fmt(x))); });
       }
       function header(title, reload) {
@@ -101,14 +101,14 @@ enum WebUI {
           header(d.os, overview);
           var cards = el("div", "cards");
           cards.appendChild(card("Python 版本", d.interpreters.length));
-          cards.appendChild(card("npm 全域套件", d.npmGlobalCount, Object.keys(d.npmOutdated).length + " 個可升級"));
-          cards.appendChild(card("pip 套件", d.pipCount, Object.keys(d.pipOutdated).length + " 個可升級" + (d.pipPythonVersion ? "（Python " + d.pipPythonVersion + "）" : "")));
-          if (d.systemPackageManager) cards.appendChild(card("系統套件（" + d.systemPackageManager + "）", d.systemPackageCount || d.systemUpgradable.length, d.systemUpgradable.length + " 個可升級"));
+          cards.appendChild(card("npm 全域套件", d.npmGlobalCount, Object.keys(d.npmOutdated).length + " 個可更新"));
+          cards.appendChild(card("pip 套件", d.pipCount, Object.keys(d.pipOutdated).length + " 個可更新" + (d.pipPythonVersion ? "（Python " + d.pipPythonVersion + "）" : "")));
+          if (d.systemPackageManager) cards.appendChild(card("系統套件（" + d.systemPackageManager + "）", d.systemPackageCount || d.systemUpgradable.length, d.systemUpgradable.length + " 個可更新"));
           view.appendChild(cards);
           var pairs = function (o) { return Object.keys(o).sort().map(function (k) { return k + " → " + o[k]; }); };
-          section("npm 可升級", pairs(d.npmOutdated), function (x) { return x; });
-          section("pip 可升級", pairs(d.pipOutdated), function (x) { return x; });
-          if (d.systemPackageManager) section("系統套件可升級", d.systemUpgradable, function (x) { return x; });
+          section("npm 可更新", pairs(d.npmOutdated), function (x) { return x; });
+          section("pip 可更新", pairs(d.pipOutdated), function (x) { return x; });
+          if (d.systemPackageManager) section("系統套件可更新", d.systemUpgradable, function (x) { return x; });
         }).catch(fail);
       }
 
@@ -136,7 +136,8 @@ enum WebUI {
         status("稽核中，可能需要一點時間…");
         api("/api/audit" + (showAll ? "?all=1" : "")).then(function (d) {
           view.replaceChildren();
-          header(d.items.length ? d.items.length + " 個套件存在弱點" : "沒有發現需要處理的已知安全弱點", audit);
+          var clean = d.failedLookups > 0 ? "稽核不完整：" + d.failedLookups + " 個套件查詢失敗，請確認網路後重試" : "沒有發現需要處理的已知安全弱點";
+          header(d.items.length ? d.items.length + " 個套件存在弱點" : clean, audit);
           if (d.hiddenCount > 0 || showAll) {
             var toggle = el("button", "btn", showAll ? "隱藏內建例外" : "顯示 " + d.hiddenCount + " 項內建例外");
             toggle.addEventListener("click", function () { showAll = !showAll; audit(); });

@@ -15,7 +15,7 @@ final class SecurityModelTests: XCTestCase {
     func testFixCommandsAreQuotedAndValidated() {
         let env = interpreterEnv("/opt/my py/bin/python3")
         let cmd = FixCommandBuilder.command(packageName: "anyio", ecosystem: "PyPI", targetVersion: "4.14.2", projectPath: nil, environment: env)
-        XCTAssertEqual(cmd, "'/opt/my py/bin/python3' -m pip install --upgrade \"anyio>=4.14.2\"")
+        XCTAssertEqual(cmd, "'/opt/my py/bin/python3' -m pip install \"anyio==4.14.2\"")
         XCTAssertEqual(FixCommandBuilder.command(packageName: "a$(id)", ecosystem: "npm", targetVersion: "1.0", projectPath: nil), "")
         XCTAssertEqual(FixCommandBuilder.command(packageName: "x", ecosystem: "PyPI", targetVersion: "1; ls", projectPath: nil), "")
         XCTAssertEqual(FixCommandBuilder.command(packageName: "lodash", ecosystem: "npm", targetVersion: "4.17.21", projectPath: nil), "npm install -g lodash@4.17.21")
@@ -26,7 +26,7 @@ final class SecurityModelTests: XCTestCase {
     func testUvToolFixUpgradesOnlyThePackage() {
         let env = PythonEnvironmentRef(kind: .uvTool, pythonPath: "/t/bin/python", toolName: "big-tool", label: "uv tool")
         let cmd = FixCommandBuilder.command(packageName: "pillow", ecosystem: "PyPI", targetVersion: "13.0.0", projectPath: nil, environment: env)
-        XCTAssertEqual(cmd, "uv pip install --python '/t/bin/python' --upgrade \"pillow>=13.0.0\"")
+        XCTAssertEqual(cmd, "uv pip install --python '/t/bin/python' \"pillow==13.0.0\"")
         XCTAssertFalse(cmd.contains("uv tool upgrade"))
     }
     

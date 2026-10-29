@@ -3,25 +3,55 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// Result of an audit run. A query that failed (offline, rate limited, bad response) is counted instead of being
+/// treated as "no vulnerabilities", so callers can tell a clean result from an incomplete one.
+public struct AuditOutcome: Sendable {
+    public var vulnerabilities: [VulnerabilityItem] = []
+    /// Package lookups attempted.
+    public var checked = 0
+    /// Lookups that did not get a usable answer from OSV.
+    public var failed = 0
+    
+    public init(vulnerabilities: [VulnerabilityItem] = [], checked: Int = 0, failed: Int = 0) {
+        self.vulnerabilities = vulnerabilities
+        self.checked = checked
+        self.failed = failed
+    }
+    
+    /// True when every lookup got an answer.
+    public var isComplete: Bool { failed == 0 }
+    
+    public mutating func merge(_ other: AuditOutcome) {
+        vulnerabilities.append(contentsOf: other.vulnerabilities)
+        checked += other.checked
+        failed += other.failed
+    }
+}
+
 public actor SecurityService {
     public static let shared = SecurityService()
     
     private let urlSession: URLSession
     private var cache: [String: [VulnerabilityItem]] = [:]
     
-    public init() {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 6
-        self.urlSession = URLSession(configuration: config)
+    public init(configuration: URLSessionConfiguration = .default) {
+        configuration.timeoutIntervalForRequest = 6
+        self.urlSession = URLSession(configuration: configuration)
     }
     
     public func auditPackage(name: String, version: String, ecosystem: String) async -> [VulnerabilityItem] {
+        await auditPackageChecked(name: name, version: version, ecosystem: ecosystem).items
+    }
+    
+    /// Looks one package up in OSV. `succeeded` is false when no usable answer came back, which is not the same
+    /// as an answer with no vulnerabilities.
+    public func auditPackageChecked(name: String, version: String, ecosystem: String) async -> (items: [VulnerabilityItem], succeeded: Bool) {
         let cacheKey = "\(ecosystem):\(name):\(version)"
         if let cached = cache[cacheKey] {
-            return cached
+            return (cached, true)
         }
         
-        guard let url = URL(string: "https://api.osv.dev/v1/query") else { return [] }
+        guard let url = URL(string: "https://api.osv.dev/v1/query") else { return ([], false) }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -36,20 +66,21 @@ public actor SecurityService {
         ]
         
         guard let httpBody = try? JSONSerialization.data(withJSONObject: payload) else {
-            return []
+            return ([], false)
         }
         request.httpBody = httpBody
         
         do {
             let (data, response) = try await urlSession.devkeeperData(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                return []
+                return ([], false)
             }
             
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let vulns = json["vulns"] as? [[String: Any]] else {
-                return []
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return ([], false)
             }
+            // OSV answers `{}` when a package has no known vulnerabilities.
+            let vulns = json["vulns"] as? [[String: Any]] ?? []
             
             var results: [VulnerabilityItem] = []
             for item in vulns {
@@ -120,15 +151,22 @@ public actor SecurityService {
             }
             
             cache[cacheKey] = results
-            return results
+            return (results, true)
         } catch {
-            return []
+            return ([], false)
         }
     }
     
     /// Audits local web project dependencies from package.json and requirements.txt
     public func auditProjectDirectory(at url: URL) async -> [VulnerabilityItem] {
+        await auditProjectDirectoryOutcome(at: url).vulnerabilities
+    }
+    
+    /// Same as `auditProjectDirectory`, but also reports how many lookups failed.
+    public func auditProjectDirectoryOutcome(at url: URL) async -> AuditOutcome {
         var foundVulns: [VulnerabilityItem] = []
+        var checked = 0
+        var failed = 0
         let fileManager = FileManager.default
         
         // 1. Check frontend/node dependencies in package.json
@@ -148,8 +186,10 @@ public actor SecurityService {
             for (pkgName, rawVer) in depsToScan.prefix(35) {
                 let cleanVer = rawVer.trimmingCharacters(in: CharacterSet(charactersIn: "^~>=< vV"))
                 if !cleanVer.isEmpty {
-                    let vulns = await auditPackage(name: pkgName, version: cleanVer, ecosystem: "npm")
-                    foundVulns.append(contentsOf: vulns)
+                    let result = await auditPackageChecked(name: pkgName, version: cleanVer, ecosystem: "npm")
+                    checked += 1
+                    if !result.succeeded { failed += 1 }
+                    foundVulns.append(contentsOf: result.items)
                 }
             }
         }
@@ -167,14 +207,16 @@ public actor SecurityService {
                     if parts.count >= 2 {
                         let name = parts[0].trimmingCharacters(in: .whitespaces)
                         let ver = parts[1].trimmingCharacters(in: .whitespaces)
-                        let vulns = await auditPackage(name: name, version: ver, ecosystem: "PyPI")
-                        foundVulns.append(contentsOf: vulns)
+                        let result = await auditPackageChecked(name: name, version: ver, ecosystem: "PyPI")
+                        checked += 1
+                        if !result.succeeded { failed += 1 }
+                        foundVulns.append(contentsOf: result.items)
                     }
                 }
             }
         }
         
-        return foundVulns.map { v in
+        let items = foundVulns.map { v in
             VulnerabilityItem(
                 id: v.id, cveId: v.cveId, packageName: v.packageName, ecosystem: v.ecosystem,
                 currentVersion: v.currentVersion, fixedVersion: v.fixedVersion, severity: v.severity,
@@ -182,5 +224,6 @@ public actor SecurityService {
                 projectPath: url.path
             )
         }
+        return AuditOutcome(vulnerabilities: items, checked: checked, failed: failed)
     }
 }

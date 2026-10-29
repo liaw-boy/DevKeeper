@@ -13,6 +13,13 @@ public final class DatabaseService: Sendable {
         "sqlite": "SQLite 輕量級嵌入式資料庫"
     ]
     
+    /// Databases that run inside the application (no server process), so `brew services` cannot start them.
+    private static let embedded: Set<String> = ["sqlite"]
+    
+    public static func isRunnableService(_ name: String) -> Bool {
+        !embedded.contains(name.lowercased())
+    }
+    
     private struct BrewServiceEntry: Decodable {
         let name: String
         let status: String

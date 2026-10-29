@@ -244,12 +244,14 @@ enum FixCommandBuilder {
         let version = targetVersion.flatMap { $0.isEmpty ? nil : $0 }
         if let version, !InputValidator.isValidVersion(version) { return "" }
         
+        // Python fixes pin the minimum safe version (`==`) instead of `>=`, which would jump to the newest
+        // release and can cross a major version that other installed packages do not allow.
         // uv tool environments: upgrade only the vulnerable package inside the tool's venv.
         // (`uv tool upgrade` would re-resolve and upgrade the tool's whole dependency tree, which can be gigabytes.)
         if let environment, environment.kind == .uvTool {
             let python = InputValidator.shellQuoted(environment.pythonPath)
             if let version {
-                return "uv pip install --python \(python) --upgrade \"\(packageName)>=\(version)\""
+                return "uv pip install --python \(python) \"\(packageName)==\(version)\""
             }
             return "uv pip install --python \(python) --upgrade \(packageName)"
         }
@@ -258,7 +260,7 @@ enum FixCommandBuilder {
         if eco.contains("pypi") || eco.contains("pip") || eco.contains("python") {
             let python = environment.map { InputValidator.shellQuoted($0.pythonPath) } ?? PythonRuntime.executable
             if let version {
-                return "\(python) -m pip install --upgrade \"\(packageName)>=\(version)\""
+                return "\(python) -m pip install \"\(packageName)==\(version)\""
             }
             return "\(python) -m pip install --upgrade \(packageName)"
         } else if eco.contains("npm") {

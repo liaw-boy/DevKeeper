@@ -7,187 +7,235 @@ public struct MainView: View {
     public init() {}
     
     public var body: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                // App Branding Header (Exact same width & alignment as navigation cards below, moved upwards)
-                HStack(spacing: 10) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Theme.primaryGradient)
-                            .frame(width: 24, height: 24)
-                            .shadow(color: Theme.primaryIndigo.opacity(0.35), radius: 4, x: 0, y: 1.5)
-                        Image(systemName: "cube.fill")
-                            .font(.system(size: 11.5, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                    .frame(width: 24, height: 24)
-                    
-                    Text("DevKeeper")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                    
-                    Text("v\(AppViewModel.appVersion)")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.05))
-                        .clipShape(Capsule())
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.03))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Theme.subtleBorder, lineWidth: 1)
-                )
-                .padding(.horizontal, 12)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
-                
-                // Navigation Items with generous, comfortable spacing
-                VStack(spacing: 8) {
-                    ForEach(NavigationTab.allCases) { tab in
-                        sidebarItem(tab: tab)
-                    }
-                }
-                .padding(.horizontal, 12)
-                
-                Spacer()
-                
-                // Bottom Real-time Status Card
-                VStack(spacing: 0) {
-                    Divider()
-                        .background(Theme.subtleBorder)
-                    
-                    HStack(spacing: 8) {
-                        if viewModel.isScanning || viewModel.isActionRunning {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(viewModel.isActionRunning ? "正在執行操作..." : "正在同步狀態...")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        } else {
-                            Circle()
-                                .fill(Theme.successGreen)
-                                .frame(width: 6.5, height: 6.5)
-                            Text("就緒 (FSEvents 即時監聽)")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                }
+        DKOverlayHost {
+            HStack(spacing: 0) {
+                Sidebar()
+                    .frame(width: DK.sidebarWidth)
+                Rectangle()
+                    .fill(DK.border)
+                    .frame(width: 1)
+                detail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(Color(red: 0.08, green: 0.09, blue: 0.11))
-            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
-        } detail: {
-            Group {
-                switch viewModel.selectedTab {
-                case .overview:
-                    OverviewView(viewModel: viewModel)
-                case .aiTools:
-                    AIToolsView(viewModel: viewModel)
-                case .npm:
-                    NpmListView(viewModel: viewModel)
-                case .python:
-                    PythonListView(viewModel: viewModel)
-                case .brew:
-                    BrewListView(viewModel: viewModel)
-                case .database:
-                    DatabaseListView(viewModel: viewModel)
-                case .security:
-                    SecurityAuditView(viewModel: viewModel)
-                case .console:
-                    ConsoleView(viewModel: viewModel)
-                case .settings:
-                    SettingsView(viewModel: viewModel)
-                }
-            }
-            .frame(minWidth: 900, minHeight: 640)
-            .background(Theme.canvasBackground)
-            .toolbar(.hidden, for: .windowToolbar)
-            .ignoresSafeArea(.container, edges: .top)
+            .background(DK.background)
+            .background(InstallPresenter(viewModel: viewModel))
         }
-        .frame(minWidth: 1140, minHeight: 740)
-        .sheet(isPresented: $viewModel.showInstallSheet) {
-            InstallPackageSheet(viewModel: viewModel)
+        .ignoresSafeArea(.container, edges: .top)
+        .frame(minWidth: 1100, minHeight: 700)
+    }
+    
+    @ViewBuilder
+    private var detail: some View {
+        switch viewModel.selectedTab {
+        case .overview: OverviewView(viewModel: viewModel)
+        case .aiTools: AIToolsView(viewModel: viewModel)
+        case .npm: NpmListView(viewModel: viewModel)
+        case .python: PythonListView(viewModel: viewModel)
+        case .brew: BrewListView(viewModel: viewModel)
+        case .database: DatabaseListView(viewModel: viewModel)
+        case .security: SecurityAuditView(viewModel: viewModel)
+        case .console: ConsoleView(viewModel: viewModel)
+        case .settings: SettingsView(viewModel: viewModel)
+        }
+    }
+}
+
+extension NavigationTab {
+    /// Short label used in the sidebar and menu bar panel.
+    var title: String {
+        switch self {
+        case .overview: return "總覽"
+        case .aiTools: return "AI 工具"
+        case .npm: return "npm"
+        case .python: return "Python"
+        case .brew: return "Homebrew"
+        case .database: return "資料庫"
+        case .security: return "安全弱點"
+        case .console: return "執行日誌"
+        case .settings: return "設定"
+        }
+    }
+}
+
+private struct Sidebar: View {
+    @EnvironmentObject private var viewModel: AppViewModel
+    
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The window's close/minimise/zoom buttons sit at the left of this row.
+            Color.clear.frame(height: 30)
+            
+            brand
+                .padding(.horizontal, DK.Space.l)
+                .padding(.bottom, DK.Space.m)
+            
+            VStack(alignment: .leading, spacing: DK.Space.xxs) {
+                item(.overview)
+                section("套件")
+                item(.aiTools, count: viewModel.outdatedAIToolCount)
+                item(.npm, count: viewModel.outdatedNpmCount)
+                item(.python, count: viewModel.outdatedPythonCount + viewModel.outdatedUVCount)
+                item(.brew, count: viewModel.outdatedBrewCount)
+                item(.database)
+                section("安全")
+                item(.security, count: viewModel.vulnerabilityCount, alert: true)
+            }
+            .padding(.horizontal, DK.Space.s)
+            
+            Spacer(minLength: DK.Space.l)
+            
+            VStack(alignment: .leading, spacing: DK.Space.xxs) {
+                item(.console)
+                item(.settings)
+            }
+            .padding(.horizontal, DK.Space.s)
+            .padding(.bottom, DK.Space.s)
+            
+            DKDivider()
+            statusLine
+                .padding(.horizontal, DK.Space.l)
+                .frame(height: 36)
+        }
+        .background(DK.surfaceSunken)
+    }
+    
+    private var brand: some View {
+        HStack(spacing: DK.Space.m) {
+            Image(systemName: "shippingbox.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(DK.onAccent)
+                .frame(width: 32, height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.accent)
+                )
+            VStack(alignment: .leading, spacing: 1) {
+                Text("DevKeeper")
+                    .font(DK.Font.heading)
+                    .foregroundColor(DK.textPrimary)
+                Text(viewModel.totalOutdatedCount > 0 ? "\(viewModel.totalOutdatedCount) 項可更新" : "全部最新")
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textTertiary)
+            }
+            Spacer(minLength: 0)
         }
     }
     
-    private func sidebarItem(tab: NavigationTab) -> some View {
-        let isSelected = viewModel.selectedTab == tab
-        
-        return Button(action: {
-            withAnimation(.easeOut(duration: 0.12)) {
-                viewModel.selectedTab = tab
+    private func section(_ title: String) -> some View {
+        Text(title)
+            .font(DK.Font.micro)
+            .foregroundColor(DK.textTertiary)
+            .padding(.horizontal, DK.Space.s)
+            .padding(.top, DK.Space.l)
+            .padding(.bottom, DK.Space.xs)
+    }
+    
+    private func item(_ tab: NavigationTab, count: Int = 0, alert: Bool = false) -> some View {
+        SidebarItem(
+            tab: tab,
+            count: count,
+            alert: alert,
+            isSelected: viewModel.selectedTab == tab
+        ) {
+            viewModel.selectedTab = tab
+        }
+    }
+    
+    private var statusLine: some View {
+        HStack(spacing: DK.Space.s) {
+            if let busy = busyText {
+                DKSpinner(size: 12)
+                Text(busy)
+            } else if let date = viewModel.lastScanDate {
+                Text("上次檢查 \(Self.timeFormatter.string(from: date))")
+            } else {
+                Text("尚未檢查")
             }
-        }) {
-            HStack(spacing: 11) {
-                Image(systemName: tab.sfSymbol)
-                    .font(.system(size: 16.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundColor(isSelected ? Theme.primaryIndigo : .secondary)
-                    .frame(width: 22, height: 22, alignment: .center)
-                
-                Text(tab.rawValue)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? .primary : .secondary)
-                
-                Spacer()
-                
-                // Outdated / Warning count badge with semantic color hierarchy
-                if let count = badgeCount(for: tab), count > 0 {
-                    let badgeTint: Color = {
-                        if tab == .security { return Theme.dangerRed }
-                        if tab == .overview { return Theme.warningAmber }
-                        return Theme.primaryIndigo
-                    }()
-                    
+            Spacer(minLength: 0)
+        }
+        .font(DK.Font.caption)
+        .foregroundColor(DK.textTertiary)
+        .lineLimit(1)
+    }
+    
+    private var busyText: String? {
+        if viewModel.isActionRunning { return "執行中…" }
+        if viewModel.isScanning { return "檢查中…" }
+        if viewModel.isAuditingSecurity { return "稽核弱點中…" }
+        if viewModel.isScanningPython { return "偵測 Python 中…" }
+        return nil
+    }
+}
+
+private struct SidebarItem: View {
+    let tab: NavigationTab
+    let count: Int
+    let alert: Bool
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+    
+    /// Package pages carry their source colour; the rest use a quiet symbol.
+    private var source: DKSource? {
+        switch tab {
+        case .aiTools: return .ai
+        case .npm: return .npm
+        case .python: return .python
+        case .brew: return .homebrew
+        case .database: return .database
+        default: return nil
+        }
+    }
+    
+    @ViewBuilder
+    private var icon: some View {
+        if let source {
+            DKSourceBadge(source, size: 22)
+        } else {
+            Image(systemName: tab.sfSymbol)
+                .font(.system(size: DK.Icon.regular))
+                .foregroundColor(alert && count > 0 ? DK.danger : (isSelected ? DK.accent : DK.textSecondary))
+                .frame(width: 22, height: 22)
+        }
+    }
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DK.Space.s) {
+                icon
+                Text(tab.title)
+                    .font(isSelected ? DK.Font.bodyMedium : DK.Font.body)
+                    .foregroundColor(isSelected ? DK.textPrimary : DK.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: DK.Space.s)
+                if count > 0 {
                     Text("\(count)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .font(DK.Font.micro)
                         .monospacedDigit()
-                        .foregroundColor(badgeTint)
+                        .foregroundColor(alert ? DK.danger : (isSelected ? DK.accent : DK.textSecondary))
                         .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(badgeTint.opacity(0.14))
-                        .clipShape(Capsule())
+                        .frame(minWidth: 20, minHeight: 18)
+                        .background(
+                            Capsule().fill(alert ? Color(light: 0xC62828, dark: 0xF07A7A, lightAlpha: 0.12, darkAlpha: 0.2)
+                                                 : (isSelected ? DK.surface.opacity(0.7) : DK.border.opacity(0.6)))
+                        )
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8.5)
+            .padding(.horizontal, DK.Space.s)
+            .frame(height: 32)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.08) : Color.clear)
+                RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous)
+                    .fill(isSelected ? DK.accentSubtle : (isHovering ? DK.surfaceHover : Color.clear))
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.bouncy(scale: 0.98))
-    }
-    
-    private func badgeCount(for tab: NavigationTab) -> Int? {
-        switch tab {
-        case .overview:
-            return viewModel.totalOutdatedCount
-        case .aiTools:
-            return viewModel.outdatedAIToolCount
-        case .npm:
-            return viewModel.outdatedNpmCount
-        case .python:
-            return viewModel.outdatedPythonCount
-        case .brew:
-            return viewModel.outdatedBrewCount
-        case .security:
-            return viewModel.vulnerabilityCount
-        case .database, .console, .settings:
-            return nil
-        }
+        .buttonStyle(DKPressStyle())
+        .onHover { isHovering = $0 }
+        .accessibilityLabel(count > 0 ? "\(tab.title)，\(count) 項" : tab.title)
     }
 }

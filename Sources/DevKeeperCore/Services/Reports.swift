@@ -17,6 +17,15 @@ public struct InterpreterReport: Codable, Sendable {
     public let supportUntil: String
 }
 
+public struct UVToolReport: Codable, Sendable {
+    public let name: String
+    public let version: String
+    public let latest: String?
+    /// Installed with an exact `==` pin, so `uv tool upgrade` will not move it.
+    public let pinned: Bool
+    public let python: String?
+}
+
 public struct ScanReport: Codable, Sendable {
     public let os: String
     public let interpreters: [InterpreterReport]
@@ -28,6 +37,9 @@ public struct ScanReport: Codable, Sendable {
     public let systemPackageManager: String?
     public let systemPackageCount: Int
     public let systemUpgradable: [String]
+    /// "ok", "notInstalled", "failed" or "updatesUnknown" (listed, but the newest versions could not be looked up).
+    public let uvStatus: String
+    public let uvTools: [UVToolReport]
 }
 
 public struct AuditItemReport: Codable, Sendable {
@@ -45,6 +57,14 @@ public struct AuditReport: Codable, Sendable {
     public let items: [AuditItemReport]
     /// Number of built-in exceptions left out (see `AuditEngine.isBuiltInException`).
     public let hiddenCount: Int
+    /// Package lookups that got no answer from OSV; when above zero a clean result is not trustworthy.
+    public let failedLookups: Int
+    
+    public init(items: [AuditItemReport], hiddenCount: Int, failedLookups: Int) {
+        self.items = items
+        self.hiddenCount = hiddenCount
+        self.failedLookups = failedLookups
+    }
 }
 
 public struct DetectedEnvironment: Sendable {
@@ -114,24 +134,38 @@ public enum ReportBuilder {
         }
         #endif
         
+        var uvStatus = "ok"
+        var uvTools: [UVToolReport] = []
+        switch await UVToolService.shared.scan() {
+        case .notInstalled: uvStatus = "notInstalled"
+        case .failed: uvStatus = "failed"
+        case .tools(let tools, let latestKnown):
+            if !latestKnown { uvStatus = "updatesUnknown" }
+            uvTools = tools.map {
+                UVToolReport(name: $0.name, version: $0.version, latest: $0.latest, pinned: $0.isPinned, python: $0.python)
+            }
+        }
+        
         return ScanReport(
             os: uname, interpreters: interpreterReports(env.interpreters),
             npmGlobalCount: npm.count, npmOutdated: npmOutdated,
             pipPythonVersion: PythonRuntime.current?.version, pipCount: pipItems.count, pipOutdated: pipOutdated,
-            systemPackageManager: manager, systemPackageCount: systemCount, systemUpgradable: upgradable
+            systemPackageManager: manager, systemPackageCount: systemCount, systemUpgradable: upgradable,
+            uvStatus: uvStatus, uvTools: uvTools
         )
     }
     
     public static func auditGroups(
         _ env: DetectedEnvironment, projectsRoot: String?, showAll: Bool
-    ) async -> (groups: [PackageVulnerabilityGroup], hidden: Int) {
-        let items = await AuditEngine.audit(
+    ) async -> (groups: [PackageVulnerabilityGroup], hidden: Int, failed: Int) {
+        let outcome = await AuditEngine.auditOutcome(
             interpreters: env.interpreters,
             npmPackages: await npmGlobals(),
             projectsRoot: projectsRoot
         )
+        let items = outcome.vulnerabilities
         let visible = showAll ? items : items.filter { !AuditEngine.isBuiltInException($0, interpreters: env.interpreters) }
-        return (PackageVulnerabilityGroup.grouped(from: visible), items.count - visible.count)
+        return (PackageVulnerabilityGroup.grouped(from: visible), items.count - visible.count, outcome.failed)
     }
     
     public static func auditItems(_ groups: [PackageVulnerabilityGroup]) -> [AuditItemReport] {

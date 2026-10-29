@@ -1,17 +1,40 @@
 import DevKeeperCore
+import ServiceManagement
 import SwiftUI
 
 public struct SettingsView: View {
     @ObservedObject var viewModel: AppViewModel
     
     // Stored Preferences
+    @AppStorage(DKAppearance.storageKey) private var appearanceRaw: String = DKAppearance.system.rawValue
     @AppStorage("scanIntervalMinutes") private var scanIntervalMinutes: Int = 30
     @AppStorage("enableFSEvents") private var enableFSEvents: Bool = true
     @AppStorage("checkSelfUpdate") private var checkSelfUpdate: Bool = true
     @AppStorage("enableSecurityAudit") private var enableSecurityAudit: Bool = true
-    @AppStorage("launchAtLogin") private var launchAtLogin: Bool = true
     @AppStorage(StatusBarController.showStatusItemKey) private var showStatusBarItem: Bool = true
     @AppStorage("projectsRootPath") private var projectsRootPath: String = ""
+    
+    @State private var launchAtLogin: Bool = false
+    @State private var launchAtLoginError: String?
+    
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin },
+            set: { newValue in
+                do {
+                    if newValue {
+                        try SMAppService.mainApp.register()
+                    } else {
+                        try SMAppService.mainApp.unregister()
+                    }
+                    launchAtLoginError = nil
+                } catch {
+                    launchAtLoginError = "無法變更開機啟動：\(error.localizedDescription)（需從 DevKeeper.app 執行）"
+                }
+                launchAtLogin = SMAppService.mainApp.status == .enabled
+            }
+        )
+    }
     
     
     public init(viewModel: AppViewModel) {
@@ -20,202 +43,154 @@ public struct SettingsView: View {
     
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(Theme.primaryIndigo)
-                        
-                        Text("偏好設定")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(.primary)
+            VStack(alignment: .leading, spacing: 0) {
+                DKPageHeader("設定", subtitle: "背景檢查、安全稽核與系統整合") {}
+                VStack(alignment: .leading, spacing: DK.Space.xl) {
+                    section("外觀") {
+                        row(title: "主題", subtitle: "跟隨系統會隨 macOS 的淺色或深色切換") {
+                            DKSegmented(
+                                options: DKAppearance.allCases.map { ($0.rawValue, $0.title) },
+                                selection: $appearanceRaw
+                            )
+                        }
                     }
                     
-                    Text("自訂 DevKeeper 之背景掃描排程、安全稽核頻率與系統整合")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(.secondary)
-                }
-                
-                Divider()
-                    .background(Theme.subtleBorder)
-                
-                // Section 1: 背景排程與自動同步
-                settingsCard(title: "背景掃描與自動同步", icon: "clock.arrow.2.circlepath") {
-                    VStack(spacing: 14) {
-                        // Row 1: 掃描頻率 Picker
-                        HStack(alignment: .center) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("定時背景掃描頻率")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundColor(.primary)
-                                Text("背景自動向 npm、PyPI 及 Homebrew 查詢最新版本資訊")
-                                    .font(.system(size: 11.5))
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer(minLength: 16)
-                            
-                            Picker("", selection: $scanIntervalMinutes) {
-                                Text("每 15 分鐘").tag(15)
-                                Text("每 30 分鐘 (建議)").tag(30)
-                                Text("每 1 小時").tag(60)
-                                Text("每 6 小時").tag(360)
-                            }
-                            .frame(width: 170)
+                    section("背景檢查") {
+                        row(title: "檢查頻率", subtitle: "定時向 npm、PyPI 與 Homebrew 查詢最新版本") {
+                            DKDropdown(options: [
+                                (15, "每 15 分鐘"), (30, "每 30 分鐘"), (60, "每 1 小時"), (360, "每 6 小時")
+                            ], selection: $scanIntervalMinutes)
+                            .frame(width: 150, alignment: .trailing)
                         }
-                        
-                        Divider().background(Color.white.opacity(0.04))
-                        
-                        // Row 2: FSEvents Toggle
-                        settingToggleRow(
-                            title: "FSEvents 即時檔案目錄監聽",
-                            subtitle: "監聽 /opt/homebrew 與 node_modules，終端機指令變更時毫秒級自動更新狀態",
+                        DKDivider()
+                        toggleRow(
+                            title: "監聽安裝目錄變更",
+                            subtitle: "監看 Applications、Homebrew 與全域 node_modules，變更後約 2 秒自動重新整理",
                             isOn: $enableFSEvents
                         )
-                        
-                        Divider().background(Color.white.opacity(0.04))
-                        
-                        // Row 3: DevKeeper Self-Update Toggle
-                        settingToggleRow(
-                            title: "自動檢查 DevKeeper 本身更新",
-                            subtitle: "當 GitHub Releases 有新版本時在介面發布通知",
+                        DKDivider()
+                        toggleRow(
+                            title: "檢查 DevKeeper 更新",
+                            subtitle: "GitHub 有新版本時在介面提示，不會自動安裝",
                             isOn: $checkSelfUpdate
                         )
                     }
-                }
-                
-                // Section 2: 安全性與弱點稽核 (OSV)
-                settingsCard(title: "安全性與弱點稽核", icon: "shield.checkered") {
-                    settingToggleRow(
-                        title: "Google OSV 國際開源漏洞庫即時比對",
-                        subtitle: "自動偵測已安裝之 npm 與 Python 套件是否存在已知 CVE / GHSA 漏洞",
-                        isOn: $enableSecurityAudit
-                    )
-                }
-                
-                // Section 4: 系統與常駐
-                settingsCard(title: "系統與開機啟動", icon: "macwindow") {
-                    settingToggleRow(
-                        title: "在選單列顯示 DevKeeper",
-                        subtitle: "於頂部選單列顯示圖示與待更新數量；關閉後仍可從 Dock 開啟主視窗",
-                        isOn: $showStatusBarItem
-                    )
                     
-                    Divider()
-                        .background(Theme.subtleBorder)
-                    
-                    settingToggleRow(
-                        title: "開機自動啟動常駐",
-                        subtitle: "登入系統時自動於頂部選單列啟動 DevKeeper 守護開發環境",
-                        isOn: $launchAtLogin
-                    )
-                }
-                
-                // 本機專案資料夾（供安全稽核掃描專案相依套件使用）
-                settingsCard(title: "本機專案資料夾", icon: "folder") {
-                    HStack(spacing: 10) {
-                        Text(projectsRootPath.isEmpty ? "尚未設定（不掃描本機專案）" : projectsRootPath)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        if !projectsRootPath.isEmpty {
-                            Button("清除") { projectsRootPath = "" }
+                    section("安全稽核") {
+                        toggleRow(
+                            title: "用 Google OSV 比對已知弱點",
+                            subtitle: "檢查已安裝的 npm 與 Python 套件是否有公開的弱點紀錄（CVE、GHSA）",
+                            isOn: $enableSecurityAudit
+                        )
+                        .onChange(of: enableSecurityAudit) { _, enabled in
+                            // Results from before the switch was turned off would otherwise stay on screen as current.
+                            if !enabled { viewModel.clearSecurityResults() }
                         }
-                        Button("選擇...") {
-                            let panel = NSOpenPanel()
-                            panel.canChooseFiles = false
-                            panel.canChooseDirectories = true
-                            panel.allowsMultipleSelection = false
-                            if panel.runModal() == .OK, let url = panel.url {
-                                projectsRootPath = url.path
+                        DKDivider()
+                        row(
+                            title: "本機專案資料夾",
+                            subtitle: projectsRootPath.isEmpty ? "尚未設定，不會掃描本機專案" : projectsRootPath
+                        ) {
+                            HStack(spacing: DK.Space.s) {
+                                if !projectsRootPath.isEmpty {
+                                    DKButton("清除", kind: .ghost) { projectsRootPath = "" }
+                                }
+                                DKButton("選擇資料夾", systemImage: "folder") { chooseProjectsFolder() }
                             }
                         }
                     }
-                }
-                
-                // Section 5: 關於 DevKeeper
-                settingsCard(title: "關於 DevKeeper", icon: "info.circle") {
-                    HStack(spacing: 14) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Theme.primaryGradient)
-                                .frame(width: 44, height: 44)
-                                .shadow(color: Theme.primaryIndigo.opacity(0.35), radius: 6, x: 0, y: 2)
-                            Image(systemName: "cube.fill")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.white)
+                    
+                    section("系統") {
+                        toggleRow(
+                            title: "在選單列顯示",
+                            subtitle: "顯示圖示與待更新數量；關閉後仍可從 Dock 開啟主視窗",
+                            isOn: $showStatusBarItem
+                        )
+                        DKDivider()
+                        toggleRow(
+                            title: "登入時自動啟動",
+                            subtitle: "登入 macOS 後自動啟動 DevKeeper",
+                            isOn: launchAtLoginBinding
+                        )
+                        if let launchAtLoginError {
+                            Text(launchAtLoginError)
+                                .font(DK.Font.caption)
+                                .foregroundColor(DK.danger)
                         }
-                        
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("DevKeeper for macOS")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.primary)
-                            Text("版本 \(AppViewModel.appVersion) (Build \(AppViewModel.appBuild)) • 原生 Swift 6.4 + SwiftUI")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(.secondary)
-                            Text("整合 Homebrew、npm、Python 與 Google OSV 安全稽核")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary.opacity(0.8))
+                    }
+                    
+                    section("關於") {
+                        HStack(spacing: DK.Space.m) {
+                            Image(systemName: "shippingbox.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(DK.onAccent)
+                                .frame(width: 36, height: 36)
+                                .background(RoundedRectangle(cornerRadius: DK.Radius.control, style: .continuous).fill(DK.accent))
+                            VStack(alignment: .leading, spacing: DK.Space.xxs) {
+                                Text("DevKeeper")
+                                    .font(DK.Font.heading)
+                                    .foregroundColor(DK.textPrimary)
+                                Text("版本 \(AppViewModel.appVersion)（Build \(AppViewModel.appBuild)）")
+                                    .font(DK.Font.caption)
+                                    .foregroundColor(DK.textSecondary)
+                            }
+                            Spacer(minLength: 0)
                         }
-                        
-                        Spacer()
                     }
                 }
+                .padding(.horizontal, DK.pagePadding)
+                .padding(.bottom, DK.pagePadding)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 20)
+        }
+        .background(DK.background)
+        .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
+        .onChange(of: scanIntervalMinutes) { viewModel.restartBackgroundTimer() }
+        .onChange(of: enableFSEvents) { viewModel.applyFileWatcherSetting() }
+    }
+    
+    private func chooseProjectsFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            projectsRootPath = url.path
+        }
+    }
+    
+    // MARK: - Layout helpers
+    
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: DK.Space.m) {
+            DKSectionTitle(title)
+            VStack(alignment: .leading, spacing: DK.Space.m) {
+                content()
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .dkCard()
         }
-        .background(Theme.canvasBackground)
     }
     
-    // MARK: - Reusable Full-Width Settings Card
-    private func settingsCard<Content: View>(title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Theme.primaryIndigo)
+    private func row<Control: View>(title: String, subtitle: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack(alignment: .center, spacing: DK.Space.l) {
+            VStack(alignment: .leading, spacing: DK.Space.xxs) {
                 Text(title)
-                    .font(.system(size: 13.5, weight: .bold))
-                    .foregroundColor(.primary)
-            }
-            
-            content()
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading) // Enforce 100% full width on every card
-        .background(Theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Theme.subtleBorder, lineWidth: 1)
-        )
-    }
-    
-    // MARK: - Reusable Precision-Aligned Toggle Row
-    private func settingToggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primary)
+                    .font(DK.Font.bodyMedium)
+                    .foregroundColor(DK.textPrimary)
                 Text(subtitle)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(.secondary)
+                    .font(DK.Font.caption)
+                    .foregroundColor(DK.textSecondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
             }
-            
-            Spacer(minLength: 16)
-            
-            Toggle("", isOn: isOn)
-                .toggleStyle(.switch)
-                .labelsHidden()
+            Spacer(minLength: DK.Space.l)
+            control()
         }
     }
     
-
+    private func toggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        row(title: title, subtitle: subtitle) {
+            DKSwitch(isOn: isOn)
+        }
+    }
 }

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DevKeeper
+Comment=View dev packages, Python environments and security findings
+Exec=devkeeper-gui
+Icon=devkeeper-gui
+Categories=Development;Utility;
+Terminal=false

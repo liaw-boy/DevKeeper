@@ -224,7 +224,7 @@ public final class PythonEnvironmentService: Sendable {
         let key = PythonDependencyGraph.normalize(packageName)
         // pip, setuptools and wheel are the environment's own tooling: never remove or move them.
         guard !PythonDependencyGraph.baseTooling.contains(key) else {
-            return .unavailable("\(packageName) 是這個 Python 的基礎工具，不會被移除。能升級到的最新版已經安裝，更高版本需要較新的 Python。")
+            return .unavailable("\(packageName) 是這個 Python 的基礎工具，不會被移除。能更新到的最新版已經安裝，更高版本需要較新的 Python。")
         }
         guard graph.names[key] != nil else {
             return .unavailable("在 Python \(interpreter.version) 找不到套件 \(packageName)。")

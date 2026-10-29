@@ -48,8 +48,9 @@ func renderIcon(pixelSize: Int) -> Data? {
     
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let colors = [
-        CGColor(red: 0.40, green: 0.48, blue: 1.0, alpha: 1.0),
-        CGColor(red: 0.28, green: 0.35, blue: 0.92, alpha: 1.0)
+        // The app's accent blue (DK.accent, light variant) with a slightly lighter top-left.
+        CGColor(red: 0.357, green: 0.529, blue: 0.941, alpha: 1.0),
+        CGColor(red: 0.231, green: 0.435, blue: 0.847, alpha: 1.0)
     ] as CFArray
     if let gradient = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 1.0]) {
         ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: s), end: CGPoint(x: s, y: 0), options: [])
@@ -64,12 +65,12 @@ func renderIcon(pixelSize: Int) -> Data? {
     ctx.strokePath()
     ctx.restoreGState()
 
-    // Same filled cube symbol the app uses in its sidebar and menu bar.
+    // The same box symbol the sidebar brand uses.
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = nsContext
-    let config = NSImage.SymbolConfiguration(pointSize: s * 0.46, weight: .bold)
+    let config = NSImage.SymbolConfiguration(pointSize: s * 0.44, weight: .bold)
         .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
-    if let symbol = NSImage(systemSymbolName: "cube.fill", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+    if let symbol = NSImage(systemSymbolName: "shippingbox.fill", accessibilityDescription: nil)?.withSymbolConfiguration(config) {
         let size = symbol.size
         symbol.draw(in: NSRect(x: (s - size.width) / 2, y: (s - size.height) / 2, width: size.width, height: size.height))
     }
