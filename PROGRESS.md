@@ -14,7 +14,7 @@
 - uv 工具管理（Python 頁的「pip 套件／uv 工具」切換）：列出、更新、移除、安裝；用 `==` 釘選的工具顯示「已釘選」不給更新；更新後重讀版本並跑 `uv pip check`；側邊欄、總覽、選單列的數量都含 uv 工具。工具名稱用嚴格 PyPI 名稱規則（`UVToolService.strictName`）。
 
 - Linux 版（`linux-gui/`，Python + PySide6，唯讀）：總覽、Python、npm、pip、uv 工具、安全稽核；資料來自 `devkeeper-cli --json`（`scan` 新增 `uvStatus`、`uvTools`），稽核結束代碼 3 顯示「結果不完整」。CI 的 `Linux GUI` 工作跑 pytest、用 PyInstaller + appimagetool 打成 `DevKeeper-x86_64.AppImage`，並用 `--check` 啟動煙霧測試（成品在 Actions 的 artifact，尚未附到 release）。
-- Linux 發版 CLI 改在 Ubuntu 22.04（`swift:6.0-jammy`）編，glibc 2.35 以上能跑；先前在 noble 編的需要 glibc 2.38。**已發布的 v1.3.0 的 Linux CLI 仍是舊的，在 22.04 跑不起來。**
+- Linux 發版 CLI 改在 Ubuntu 22.04（`swift:6.0-jammy`）編，glibc 2.35 以上能跑；先前在 noble 編的需要 glibc 2.38。v1.3.0 的 Linux CLI 是舊的，在 22.04 跑不起來；v1.4.0 起修正。
 
 ## 尚未驗證（需要人操作）
 
