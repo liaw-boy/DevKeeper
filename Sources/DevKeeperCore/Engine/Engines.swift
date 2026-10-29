@@ -187,7 +187,7 @@ public enum FixEngine {
         let outcome: FixOutcome
         
         if let checkCommand, let previous, let now = installed, now != previous,
-           case let introduced = (await DependencyCheck.run(checkCommand)).subtracting(conflictsBefore), !introduced.isEmpty {
+           case let introduced = DependencyCheck.newConflicts(after: await DependencyCheck.run(checkCommand), before: conflictsBefore), !introduced.isEmpty {
             // The upgrade broke another package's version requirement: put the old version back.
             let list = introduced.sorted().map { "• \($0)" }.joined(separator: "\n")
             let rollback = FixCommandBuilder.command(packageName: packageName, ecosystem: ecosystem, targetVersion: previous,
@@ -278,6 +278,17 @@ public enum DependencyCheck {
         Set(output.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.contains(" requires ") || $0.contains(" has requirement ") })
+    }
+    
+    /// Compares conflicts without the version of the package that declares the requirement: pip prints
+    /// `foo 1.0 requires bar>=2` and after upgrading foo the same problem reads `foo 1.1 requires bar>=2`.
+    static func key(_ conflict: String) -> String {
+        conflict.replacingOccurrences(of: #"^(\S+) \S+ (requires|has requirement) "#, with: "$1 $2 ", options: .regularExpression)
+    }
+    
+    public static func newConflicts(after: Set<String>, before: Set<String>) -> Set<String> {
+        let known = Set(before.map(key))
+        return after.filter { !known.contains(key($0)) }
     }
     
     static func run(_ command: String) async -> Set<String> {

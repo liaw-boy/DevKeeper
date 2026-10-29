@@ -4,27 +4,35 @@ import XCTest
 final class FixSafetyTests: XCTestCase {
     func testParsesPipAndUVConflictLines() {
         let pip = """
-        demo-app 0.5.0 has requirement filelock<4,>=3.13, but you have filelock 4.2.4.
+        demo-app 0.5.0 has requirement libfoo<4,>=3.13, but you have libfoo 4.2.4.
         wheel 0.48.0 requires packaging, which is not installed.
         """
         let uv = """
         Checked 154 packages in 1ms
         Found 1 incompatibility
-        The package `demo-lib` requires `filelock>=3.16.1,<4.0`, but `4.2.4` is installed
+        The package `demo-lib` requires `libfoo>=3.16.1,<4.0`, but `4.2.4` is installed
         """
         XCTAssertEqual(DependencyCheck.conflicts(in: pip).count, 2)
-        XCTAssertEqual(DependencyCheck.conflicts(in: uv), ["The package `demo-lib` requires `filelock>=3.16.1,<4.0`, but `4.2.4` is installed"])
+        XCTAssertEqual(DependencyCheck.conflicts(in: uv), ["The package `demo-lib` requires `libfoo>=3.16.1,<4.0`, but `4.2.4` is installed"])
         XCTAssertTrue(DependencyCheck.conflicts(in: "No broken requirements found.").isEmpty)
         XCTAssertTrue(DependencyCheck.conflicts(in: "Checked 17 packages in 0.4ms\nAll installed packages are compatible").isEmpty)
     }
     
     func testOnlyNewConflictsCountAsCausedByTheUpgrade() {
-        let before = DependencyCheck.conflicts(in: "The package `demo-suite` requires `setuptools>=76.0.0,<80.0.0`, but `84.0.0` is installed")
+        let before = DependencyCheck.conflicts(in: "The package `demo-suite` requires `libbar>=76.0.0,<80.0.0`, but `84.0.0` is installed")
         let after = DependencyCheck.conflicts(in: """
-        The package `demo-suite` requires `setuptools>=76.0.0,<80.0.0`, but `84.0.0` is installed
+        The package `demo-suite` requires `libbar>=76.0.0,<80.0.0`, but `84.0.0` is installed
         The package `demo-tool` requires `libbaz>=3.1.1,<4`, but `4.1.3` is installed
         """)
         XCTAssertEqual(after.subtracting(before), ["The package `demo-tool` requires `libbaz>=3.1.1,<4`, but `4.1.3` is installed"])
+    }
+    
+    func testUpgradedPackagesOwnVersionChangeIsNotANewConflict() {
+        let before = DependencyCheck.conflicts(in: "demo-app 1.0 requires libfoo>=2, which is not installed.")
+        let same = DependencyCheck.conflicts(in: "demo-app 1.1 requires libfoo>=2, which is not installed.")
+        let other = DependencyCheck.conflicts(in: "demo-app 1.1 requires libfoo>=2, which is not installed.\ndemo-lib 2.0 requires libqux<3, but you have libqux 3.1.")
+        XCTAssertTrue(DependencyCheck.newConflicts(after: same, before: before).isEmpty)
+        XCTAssertEqual(DependencyCheck.newConflicts(after: other, before: before).count, 1)
     }
     
     func testPythonFixesPinTheMinimumSafeVersion() {

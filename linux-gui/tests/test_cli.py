@@ -87,6 +87,18 @@ def test_scan_shape_is_validated():
     assert scan.npm_outdated == {"x": "1"} and scan.pip_count == 0
 
 
+def test_audit_report_with_failed_lookups_is_incomplete_even_with_findings():
+    report = {"items": [{"package": "p", "severity": "high"}], "failedLookups": 2}
+    audit = cli.parse_audit(report, 1)
+    assert audit.incomplete and len(audit.items) == 1
+    assert not cli.parse_audit({"items": [], "failedLookups": 0}, 0).incomplete
+
+
+def test_audit_asks_the_cli_for_the_report(tmp_path, monkeypatch):
+    fake_cli(tmp_path, 'case "$2" in --report) echo \'{"items": [], "failedLookups": 1}\';; *) echo "[]";; esac\n', monkeypatch)
+    assert cli.load_audit().incomplete
+
+
 def test_audit_items_must_be_objects():
     with pytest.raises(cli.CLIError):
         cli.parse_audit(["x"], 0)

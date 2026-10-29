@@ -134,6 +134,14 @@ _SEVERITY_ORDER = {"critical": 0, "high": 1, "moderate": 2, "medium": 2, "low": 
 
 
 def parse_audit(data: Any, exit_code: int) -> Audit:
+    """Accepts the `audit --report` object (with failedLookups) or the older bare list.
+
+    A list carries no failure count, so only exit code 3 can say the result is incomplete; with the object,
+    any failed lookup does, even when some vulnerabilities were found (exit code 1)."""
+    failed = 0
+    if isinstance(data, dict):
+        failed = _count(data.get("failedLookups", 0), "failedLookups")
+        data = data.get("items", [])
     items = _expect(data, list, "audit")
     for item in items:
         _expect(item, dict, "audit item")
@@ -141,7 +149,7 @@ def parse_audit(data: Any, exit_code: int) -> Audit:
         item["environments"] = _text_list(item.get("environments"))
         item["cves"] = _text_list(item.get("cves"))
     items = sorted(items, key=lambda i: _SEVERITY_ORDER.get(str(i.get("severity", "")).lower(), 9))
-    return Audit(items=items, incomplete=exit_code == 3)
+    return Audit(items=items, incomplete=exit_code == 3 or failed > 0)
 
 
 def parse_interpreters(data: Any) -> List[dict]:
@@ -160,5 +168,5 @@ def load_interpreters() -> List[dict]:
 
 
 def load_audit() -> Audit:
-    code, data = run_json(["audit"])
+    code, data = run_json(["audit", "--report"])
     return parse_audit(data, code)

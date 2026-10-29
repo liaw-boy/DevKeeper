@@ -103,14 +103,25 @@ public final class UVToolService: Sendable {
     public func scan() async -> UVToolScan {
         guard let found = try? await ShellExecutor.shared.run(command: "command -v uv"),
               !found.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .notInstalled }
-        guard let listOutput = try? await ShellExecutor.shared.run(command: "uv tool list \(Self.listFlags) 2>/dev/null") else {
-            return .failed
-        }
+        // An older uv may not know the --show-* flags; the plain listing still shows the tools.
+        let list = await list()
+        guard let listOutput = list.output else { return .failed }
         let all = Self.parseList(listOutput)
-        guard let outdatedOutput = try? await ShellExecutor.shared.run(command: "uv tool list --outdated \(Self.listFlags) 2>/dev/null") else {
+        var outdatedResult = await Self.run("uv tool list --outdated \(list.usedFlags ? Self.listFlags : "") 2>/dev/null")
+        if outdatedResult == nil, list.usedFlags { outdatedResult = await Self.run("uv tool list --outdated 2>/dev/null") }
+        guard let outdatedOutput = outdatedResult else {
             return .tools(all, latestKnown: false)
         }
         return .tools(Self.merge(all: all, outdated: Self.parseList(outdatedOutput)), latestKnown: true)
+    }
+    
+    private static func run(_ command: String) async -> String? {
+        try? await ShellExecutor.shared.run(command: command)
+    }
+    
+    private func list() async -> (output: String?, usedFlags: Bool) {
+        if let full = await Self.run("uv tool list \(Self.listFlags) 2>/dev/null") { return (full, true) }
+        return (await Self.run("uv tool list 2>/dev/null"), false)
     }
     
     /// Runs `uv pip check` on a tool's environment. Returns the problems found, or nil when it is consistent

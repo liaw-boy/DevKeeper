@@ -18,6 +18,9 @@ def test_window_shows_incomplete_audit_banner(tmp_path, monkeypatch):
     win = MainWindow.__new__(MainWindow)
     MainWindow.__init__(win, app)
     win._pending = 1
+    win._on_error("python", "x")
+    win._clear_error("scan")  # another job succeeding must not hide the failure
+    assert not win.overview_error.isHidden() and win._errors == {"python": "x"}
     win._on_audit(cli.Audit(items=[{"package": "p", "severity": "high", "currentVersion": "1",
                                     "safeVersion": None, "environments": ["e"], "cves": []}], incomplete=True))
     assert win.audit_table.rowCount() == 1

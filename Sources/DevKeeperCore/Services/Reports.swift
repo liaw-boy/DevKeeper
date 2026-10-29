@@ -59,6 +59,12 @@ public struct AuditReport: Codable, Sendable {
     public let hiddenCount: Int
     /// Package lookups that got no answer from OSV; when above zero a clean result is not trustworthy.
     public let failedLookups: Int
+    
+    public init(items: [AuditItemReport], hiddenCount: Int, failedLookups: Int) {
+        self.items = items
+        self.hiddenCount = hiddenCount
+        self.failedLookups = failedLookups
+    }
 }
 
 public struct DetectedEnvironment: Sendable {

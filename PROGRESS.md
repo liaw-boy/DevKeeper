@@ -32,7 +32,7 @@
 1. Python 頁沒有「全部更新」，uv 工具也沒有（相依衝突風險，只能逐一更新）（需要在 Core 新增批次升級邏輯與測試）。
 2. B 區塊：新版本／新弱點的系統通知、視窗關閉後可從選單列重開（需 AppDelegate，單一 `Window` scene 關閉會結束 App）、釘選與略過版本、歷史紀錄頁、勾選後批次升級。
 3. 稽核頁的其他舊問題：CLI `--json` 輸出不含 `failedLookups`（stderr 才有警告）；移除指令在顯示與執行處各有一份，可能分岔，之後可改成服務直接用 `PackageItem.uninstallCommands`。
-4. 使用者環境的相依衝突未還原（未獲同意）：`uv tool` 的 demo-agent、demo-app 為 filelock 4.2.4（要求 <4），demo-tool 為 libbaz 4.1.3（要求 <4）。建議用 `uv pip install --python <tool python> "filelock<4"` 這類範圍指令，之後重跑 `uv pip check` 與稽核。
+4. 使用者環境裡有 uv tool 的相依衝突未還原（未獲同意）：可用 `uv pip install --python <tool python> "<套件>==<安全版本>"` 這類範圍指令，之後重跑 `uv pip check` 與稽核。
 5. 發版：版本號在 `bundle.sh`，打 tag 與發布要等明確同意。
 
 ## 驗證方式

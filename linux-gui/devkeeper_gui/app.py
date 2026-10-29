@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         self.pool = QThreadPool.globalInstance()
         self.scan: Optional[cli.Scan] = None
         self._jobs: set = set()
+        self._errors: dict = {}  # job key -> message, so one job's success cannot hide another's failure
         self.setWindowTitle("DevKeeper")
         self.resize(1000, 680)
 
@@ -214,15 +215,15 @@ class MainWindow(QMainWindow):
         self.refresh_btn.setEnabled(False)
         self.refresh_btn.setText("讀取中…")
         self._pending = 3
-        self._run(cli.load_scan, self._on_scan)
-        self._run(cli.load_interpreters, self._on_interpreters)
-        self._run(cli.load_audit, self._on_audit)
+        self._run("scan", cli.load_scan, self._on_scan)
+        self._run("python", cli.load_interpreters, self._on_interpreters)
+        self._run("audit", cli.load_audit, self._on_audit)
 
-    def _run(self, fn, ok):
+    def _run(self, key, fn, ok):
         job = _Job(fn)
         self._jobs.add(job)
-        job.signals.done.connect(lambda result, j=job: (self._jobs.discard(j), ok(result)))
-        job.signals.failed.connect(lambda msg, f=fn, j=job: (self._jobs.discard(j), self._on_error(f, msg)))
+        job.signals.done.connect(lambda result, j=job, k=key: (self._jobs.discard(j), self._clear_error(k), ok(result)))
+        job.signals.failed.connect(lambda msg, k=key, j=job: (self._jobs.discard(j), self._on_error(k, msg)))
         self.pool.start(job)
 
     def _finish_one(self):
@@ -231,17 +232,27 @@ class MainWindow(QMainWindow):
             self.refresh_btn.setEnabled(True)
             self.refresh_btn.setText("重新整理")
 
-    def _on_error(self, fn, message: str):
-        self.overview_error.setText(message)
-        self.overview_error.show()
-        if fn is cli.load_audit:
+    def _clear_error(self, key: str):
+        self._errors.pop(key, None)
+        self._show_errors()
+
+    def _show_errors(self):
+        if self._errors:
+            self.overview_error.setText("\n".join(dict.fromkeys(self._errors.values())))
+            self.overview_error.show()
+        else:
+            self.overview_error.hide()
+
+    def _on_error(self, key: str, message: str):
+        self._errors[key] = message
+        self._show_errors()
+        if key == "audit":
             self.audit_banner.setText(message)
             self.audit_banner.show()
         self._finish_one()
 
     def _on_scan(self, scan: cli.Scan):
         self.scan = scan
-        self.overview_error.hide()
         self.overview_sub.setText(scan.os)
         self.cards["npm"].setText(str(len(scan.npm_outdated)))
         self.cards["pip"].setText(str(len(scan.pip_outdated)))
@@ -294,8 +305,8 @@ def _self_check(app: QApplication, win: MainWindow) -> int:
     Used by CI to prove the packaged build starts; exit 0 only when no page reported an error."""
     QThreadPool.globalInstance().waitForDone(300000)
     app.processEvents()
-    failed = not win.overview_error.isHidden()
-    print("devkeeper-gui check:", "FAILED - " + win.overview_error.text() if failed else "ok")
+    failed = bool(win._errors)
+    print("devkeeper-gui check:", "FAILED - " + "; ".join(dict.fromkeys(win._errors.values())) if failed else "ok")
     return 1 if failed else 0
 
 

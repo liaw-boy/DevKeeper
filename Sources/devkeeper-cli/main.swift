@@ -26,6 +26,7 @@ struct Options {
     var yes = false
     var dryRun = false
     var showAll = false
+    var report = false
     var port: UInt16 = 8765
     var projects: String? = ProcessInfo.processInfo.environment["DEVKEEPER_PROJECTS"]
 }
@@ -42,6 +43,7 @@ func parseArguments() -> (Options, [String]) {
         case "--yes", "-y": options.yes = true
         case "--dry-run": options.dryRun = true
         case "--all": options.showAll = true
+        case "--report": options.report = true
         case "--projects":
             index += 1
             if index < args.count { options.projects = args[index] }
@@ -75,7 +77,8 @@ func usage() {
     選項：
       --json          以 JSON 輸出（scan、python list、audit）
       --yes, -y       fix：確認執行（更新、搬移或移除套件）；沒加時只預覽
-      --dry-run       fix：只預覽會執行的指令（與不加 --yes 相同，結束代碼為 0）
+      --dry-run       fix：只預覽會執行的指令（與不加 --yes 相同，結束代碼為 0；不加 --dry-run 也不加 --yes 時結束代碼為 2）
+      --report        audit --json：輸出含 failedLookups（查詢失敗數）的物件，而不是只有弱點清單
       --all           audit：連內建例外（系統 Python 附的 pip、setuptools、wheel）也顯示
       --port 埠號      serve：監聽的連接埠（預設 8765，0 = 自動挑選）
       --projects 路徑  稽核該資料夾底下專案的 package.json 與 requirements.txt
@@ -166,7 +169,11 @@ func commandAudit() async -> Int32 {
     let result = await auditGroups(env)
     let incompleteNote = "有 \(result.failed) 個套件查詢 OSV 失敗，結果不完整，請確認網路後重試。"
     if options.json {
-        printJSON(ReportBuilder.auditItems(result.groups))
+        if options.report {
+            printJSON(AuditReport(items: ReportBuilder.auditItems(result.groups), hiddenCount: result.hidden, failedLookups: result.failed))
+        } else {
+            printJSON(ReportBuilder.auditItems(result.groups))
+        }
         if result.failed > 0 { FileHandle.standardError.write(Data((incompleteNote + "\n").utf8)) }
         return result.groups.isEmpty ? (result.failed > 0 ? 3 : 0) : 1
     }
