@@ -1,6 +1,6 @@
 cask "devkeeper" do
-  version "1.3.0"
-  sha256 "6708e1928e710f9d5b6f5e1dec10d677062d0dd3a5f0b18411089f2bf7773133"
+  version "1.4.0"
+  sha256 "82159c25f1c14ef94e4ea3d17a46251064ec339a34e01249b9770155a888a081"
 
   url "https://github.com/liaw-boy/DevKeeper/releases/download/v#{version}/DevKeeper.dmg"
   name "DevKeeper"
